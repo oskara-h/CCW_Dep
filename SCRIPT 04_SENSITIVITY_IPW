@@ -1,0 +1,450 @@
+######################################
+### CCW SCRIPT 4 - IPW SENSITIVITY ###
+######################################
+library(tidyverse)
+library(mice)
+library(MASS)
+library(broom)
+library(gt)
+library(sandwich)
+
+# CREATE IPW IMPUTATION DATASET
+ ## Separate imputation required to retain participants with missing CW data for the IPW response model
+
+ipw_imputation_data <- depressed_sample %>%
+  mutate(
+    row_id = row_number(),
+    climate_response_observed = if_else(!is.na(climate_binary), 1, 0)
+  ) %>%
+  dplyr::select(
+    row_id,
+    climate_response_observed,
+    climate_binary,
+    climate_ordinal,
+    gender_binary,
+    age,
+    ses,
+    university_plans_binary,
+    depression_centered,
+    antisocial_centered,
+    cannabis_binary,
+    family_conflict_0,
+    school_dissatisfaction_mean_0,
+    bullying_mean_0,
+    no_close_peer_relationship_binary,
+    club_membership_binary,
+    social_media_time_0,
+    social_media_pressure_0,
+    reading_time_0,
+    urbanicity_0,
+    municipality,
+    family_violence_binary
+  ) %>%
+  mutate(
+    across(
+      where(~ inherits(.x, "haven_labelled")),
+      haven::zap_labels
+    )
+  )
+
+mice::md.pattern(ipw_imputation_data)
+
+# MULTIPLE IMPUTATION FOR IPW SENSITIVITY
+
+init_ipw <- mice(
+  ipw_imputation_data,
+  maxit = 0
+)
+
+predictor_matrix_ipw <- init_ipw$predictorMatrix
+imp_method_ipw <- init_ipw$method
+
+imp_method_ipw["row_id"] <- ""
+imp_method_ipw["climate_response_observed"] <- ""
+imp_method_ipw["climate_binary"] <- ""
+imp_method_ipw["climate_ordinal"] <- ""
+imp_method_ipw["depression_centered"] <- ""
+
+predictor_matrix_ipw[, c("row_id", "climate_binary", "climate_ordinal")] <- 0
+predictor_matrix_ipw[c("row_id", "climate_response_observed", "climate_binary", "climate_ordinal"), ] <- 0
+
+set.seed(12345)
+
+Imp_ipw <- mice(
+  ipw_imputation_data,
+  m = 10,
+  maxit = 5,
+  method = imp_method_ipw,
+  predictorMatrix = predictor_matrix_ipw
+)
+
+ipw_completed_all <- mice::complete(
+  Imp_ipw,
+  action = "all"
+)
+
+# ESTIMATE INVERSE PROBABILITY WEIGHTS
+
+estimate_ipw <- function(data) {
+  
+  response_model <- glm(
+    climate_response_observed ~
+      gender_binary +
+      age +
+      ses +
+      university_plans_binary +
+      depression_centered +
+      antisocial_centered +
+      cannabis_binary +
+      family_conflict_0 +
+      school_dissatisfaction_mean_0 +
+      bullying_mean_0 +
+      no_close_peer_relationship_binary +
+      club_membership_binary +
+      social_media_time_0 +
+      social_media_pressure_0 +
+      reading_time_0 +
+      urbanicity_0 +
+      family_violence_binary,
+    data = data,
+    family = binomial(link = "logit")
+  )
+  
+  data %>%
+    mutate(
+      p_observed = predict(response_model, type = "response"),
+      ipw_missing = mean(climate_response_observed, na.rm = TRUE) / p_observed,
+      ipw_missing_truncated = pmin(
+        pmax(
+          ipw_missing,
+          quantile(ipw_missing, probs = .01, na.rm = TRUE)
+        ),
+        quantile(ipw_missing, probs = .99, na.rm = TRUE)
+      )
+    )
+}
+
+ipw_completed_all <- purrr::map(
+  ipw_completed_all,
+  estimate_ipw
+)
+
+# IPW DIAGNOSTICS
+
+ipw_diagnostics <- purrr::map_dfr(
+  ipw_completed_all,
+  ~ tibble(
+    mean_weight = mean(.x$ipw_missing, na.rm = TRUE),
+    sd_weight = sd(.x$ipw_missing, na.rm = TRUE),
+    min_weight = min(.x$ipw_missing, na.rm = TRUE),
+    p01_weight = quantile(.x$ipw_missing, .01, na.rm = TRUE),
+    median_weight = median(.x$ipw_missing, na.rm = TRUE),
+    p99_weight = quantile(.x$ipw_missing, .99, na.rm = TRUE),
+    max_weight = max(.x$ipw_missing, na.rm = TRUE),
+    mean_truncated_weight = mean(.x$ipw_missing_truncated, na.rm = TRUE),
+    max_truncated_weight = max(.x$ipw_missing_truncated, na.rm = TRUE)
+  ),
+  .id = "imputation"
+)
+
+print(ipw_diagnostics)
+
+# CREATE WEIGHTED ANALYTIC DATASETS
+
+ipw_ordinal_list <- ipw_completed_all %>%
+  purrr::map(
+    ~ .x %>%
+      filter(
+        climate_response_observed == 1,
+        !is.na(climate_ordinal)
+      )
+  )
+
+ipw_binary_list <- ipw_completed_all %>%
+  purrr::map(
+    ~ .x %>%
+      filter(
+        climate_response_observed == 1,
+        !is.na(climate_binary)
+      )
+  )
+
+# HELPER FUNCTIONS
+
+extract_ordinal_ipw_estimates <- function(model, data, cluster_variable = "municipality") {
+  
+  model_rows <- as.integer(rownames(stats::model.frame(model)))
+  cluster_id <- as.factor(data[[cluster_variable]][model_rows])
+  
+  clustered_vcov <- sandwich::vcovCL(
+    x = model,
+    cluster = cluster_id,
+    type = "HC1"
+  )
+  
+  slope_terms <- names(stats::coef(model))
+  
+  tibble::tibble(
+    term = slope_terms,
+    estimate = unname(stats::coef(model)[slope_terms]),
+    variance = unname(diag(clustered_vcov)[slope_terms])
+  )
+}
+
+extract_binary_ipw_estimates <- function(model, data, cluster_variable = "municipality") {
+  
+  model_rows <- as.integer(rownames(stats::model.frame(model)))
+  cluster_id <- as.factor(data[[cluster_variable]][model_rows])
+  
+  clustered_vcov <- sandwich::vcovCL(
+    x = model,
+    cluster = cluster_id,
+    type = "HC1"
+  )
+  
+  model_terms <- names(stats::coef(model))
+  
+  tibble::tibble(
+    term = model_terms,
+    estimate = unname(stats::coef(model)[model_terms]),
+    variance = unname(diag(clustered_vcov)[model_terms])
+  )
+}
+
+pool_mi_estimates <- function(estimates_list) {
+  
+  model_terms <- estimates_list[[1]]$term
+  
+  purrr::map_dfr(
+    model_terms,
+    function(current_term) {
+      
+      term_data <- purrr::map_dfr(
+        estimates_list,
+        ~ dplyr::filter(.x, term == current_term)
+      )
+      
+      pooled_term <- mice::pool.scalar(
+        Q = term_data$estimate,
+        U = term_data$variance,
+        n = Inf
+      )
+      
+      pooled_estimate <- pooled_term$qbar
+      pooled_se <- sqrt(pooled_term$t)
+      pooled_df <- pooled_term$df
+      pooled_statistic <- pooled_estimate / pooled_se
+      
+      tibble::tibble(
+        term = current_term,
+        estimate = pooled_estimate,
+        std.error = pooled_se,
+        df = pooled_df,
+        statistic = pooled_statistic,
+        p.value = 2 * stats::pt(
+          q = abs(pooled_statistic),
+          df = pooled_df,
+          lower.tail = FALSE
+        ),
+        conf.low = pooled_estimate -
+          stats::qt(.975, df = pooled_df) * pooled_se,
+        conf.high = pooled_estimate +
+          stats::qt(.975, df = pooled_df) * pooled_se
+      )
+    }
+  )
+}
+
+# IPW ORDINAL MODEL
+
+ipw_ordinal_models <- purrr::map(
+  ipw_ordinal_list,
+  ~ MASS::polr(
+    factor(climate_ordinal, ordered = TRUE) ~
+      depression_centered *
+      antisocial_centered +
+      gender_binary +
+      age +
+      ses +
+      university_plans_binary +
+      cannabis_binary +
+      family_conflict_0 +
+      school_dissatisfaction_mean_0 +
+      bullying_mean_0 +
+      no_close_peer_relationship_binary +
+      club_membership_binary +
+      social_media_time_0 +
+      social_media_pressure_0 +
+      reading_time_0 +
+      urbanicity_0 +
+      family_violence_binary,
+    data = .x,
+    weights = ipw_missing_truncated,
+    Hess = TRUE,
+    model = TRUE
+  )
+)
+
+ipw_ordinal_estimates <- purrr::map2(
+  ipw_ordinal_models,
+  ipw_ordinal_list,
+  extract_ordinal_ipw_estimates
+)
+
+ipw_ordinal_results <- pool_mi_estimates(
+  ipw_ordinal_estimates
+)
+
+print(ipw_ordinal_results, n = Inf)
+
+# IPW BINARY MODEL
+
+ipw_binary_models <- purrr::map(
+  ipw_binary_list,
+  ~ glm(
+    I(1 - climate_binary) ~
+      depression_centered *
+      antisocial_centered +
+      gender_binary +
+      age +
+      ses +
+      university_plans_binary +
+      cannabis_binary +
+      family_conflict_0 +
+      school_dissatisfaction_mean_0 +
+      bullying_mean_0 +
+      no_close_peer_relationship_binary +
+      club_membership_binary +
+      social_media_time_0 +
+      social_media_pressure_0 +
+      reading_time_0 +
+      urbanicity_0 +
+      family_violence_binary,
+    data = .x,
+    weights = ipw_missing_truncated,
+    family = binomial(link = "logit")
+  )
+)
+
+ipw_binary_estimates <- purrr::map2(
+  ipw_binary_models,
+  ipw_binary_list,
+  extract_binary_ipw_estimates
+)
+
+ipw_binary_results <- pool_mi_estimates(
+  ipw_binary_estimates
+)
+
+print(ipw_binary_results, n = Inf)
+
+# FORMAT RESULTS TABLES
+
+format_ipw_table <- function(data) {
+  
+  data %>%
+    as_tibble() %>%
+    filter(
+      term != "(Intercept)",
+      !stringr::str_detect(term, "\\|")
+    ) %>%
+    mutate(
+      estimate = exp(estimate),
+      conf.low = exp(conf.low),
+      conf.high = exp(conf.high),
+      
+      term_label = case_when(
+        term == "depression_centered" ~ "Depressive symptoms",
+        term == "antisocial_centered" ~ "Antisocial traits",
+        term == "depression_centered:antisocial_centered" ~
+          "Depressive symptoms x antisocial traits",
+        term == "gender_binary" ~ "Gender (girls)",
+        term == "age" ~ "Age",
+        term == "ses" ~ "Socioeconomic status",
+        term == "university_plans_binary" ~ "University plans",
+        term == "cannabis_binary" ~ "Cannabis use",
+        term == "family_conflict_0" ~ "Family conflict",
+        term == "family_violence_binary" ~ "Family violence",
+        term == "bullying_mean_0" ~ "Bullying",
+        term == "school_dissatisfaction_mean_0" ~ "School dissatisfaction",
+        term == "no_close_peer_relationship_binary" ~ "No close peer relationship",
+        term == "club_membership_binary" ~ "Club membership",
+        term == "social_media_time_0" ~ "Social media time",
+        term == "social_media_pressure_0" ~ "Social media pressure",
+        term == "reading_time_0" ~ "Reading time",
+        term == "urbanicity_0" ~ "Urbanicity",
+        TRUE ~ term
+      ),
+      
+      significance = case_when(
+        p.value < .001 ~ "***",
+        p.value < .01 ~ "**",
+        p.value < .05 ~ "*",
+        TRUE ~ ""
+      ),
+      
+      OR_CI = paste0(
+        sprintf("%.2f", estimate),
+        " (",
+        sprintf("%.2f", conf.low),
+        ", ",
+        sprintf("%.2f", conf.high),
+        ")"
+      ),
+      
+      p = case_when(
+        p.value < .001 ~ paste0("< .001", significance),
+        TRUE ~ paste0(sprintf("%.3f", p.value), significance)
+      )
+    ) %>%
+    dplyr::select(
+      term_label,
+      OR_CI,
+      p
+    )
+}
+
+# PUBLICATION TABLES
+
+ipw_ordinal_gt <- format_ipw_table(ipw_ordinal_results) %>%
+  gt() %>%
+  tab_header(
+    title = "IPW sensitivity analysis: ordinal climate worry model"
+  ) %>%
+  cols_label(
+    term_label = "Predictor",
+    OR_CI = "OR (95% CI)",
+    p = "p"
+  ) %>%
+  tab_source_note(
+    source_note = "Note. IPW = inverse probability weighting. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. Weights adjust for the estimated probability of having observed climate worry outcome data. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
+  ) %>%
+  tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+ipw_binary_gt <- format_ipw_table(ipw_binary_results) %>%
+  gt() %>%
+  tab_header(
+    title = "IPW sensitivity analysis: binary climate disengagement model"
+  ) %>%
+  cols_label(
+    term_label = "Predictor",
+    OR_CI = "OR (95% CI)",
+    p = "p"
+  ) %>%
+  tab_source_note(
+    source_note = "Note. IPW = inverse probability weighting. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. The outcome is climate disengagement, coded 1 = no climate worry and 0 = any climate worry. Weights adjust for the estimated probability of having observed climate worry outcome data. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
+  ) %>%
+  tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+ipw_ordinal_gt
+ipw_binary_gt
