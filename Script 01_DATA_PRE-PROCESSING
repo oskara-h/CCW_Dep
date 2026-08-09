@@ -531,9 +531,9 @@ table(
   useNA = "ifany"
 )
 
-###################################
-### CREATE BULLYING SCALE #########
-###################################
+#############################
+### CREATE BULLYING SCALE ###
+#############################
 # Bullying items are reverse-coded so higher values indicate more bullying.
 # Require 2 of 2 items completed.
 
@@ -864,9 +864,9 @@ cronbach_alpha_summary <- tibble::tibble(
 
 cronbach_alpha_summary
 
-##############################################
-### MUNICIPALITY CLUSTERING: NULL ICC MODELS #
-##############################################
+################################################
+### MUNICIPALITY CLUSTERING: NULL ICC MODELS ###
+################################################
 # Prepare complete-case data for the binary outcome
 icc_binary_data <- depressed_sample %>%
   filter(
@@ -982,9 +982,9 @@ not_worried_by_gender_main <- depressed_sample %>%
   )
 
 not_worried_by_gender_main
-##############################################################################
-### SELECT VARIABLES FOR MODEL-SPECIFIC IMPUTATION DATASETS ##################
-##############################################################################
+###############################################################
+### SELECT VARIABLES FOR MODEL-SPECIFIC IMPUTATION DATASETS ###
+###############################################################
 
 # OUTCOMES
 outcomes <- depressed_sample %>%
@@ -1018,9 +1018,9 @@ main_covariates <- depressed_sample %>%
     family_violence_binary
   )
 
-##########################################################
+###########################
 ### MULTIPLE IMPUTATION ###
-##########################################################
+###########################
 
 imputation_data <- bind_cols(
   outcomes,
@@ -1078,9 +1078,9 @@ colSums(
   is.na(complete_ordinal_1)
 )
 
-####################################
-### IMPUTATION FOR BINARY MODEL ####
-####################################
+###################################
+### IMPUTATION FOR BINARY MODEL ###
+###################################
 # Restrict to participants with observed climate worry response.
 
 imputation_data_binary <- imputation_data %>%
@@ -1127,9 +1127,9 @@ colSums(
 ### DIAGNOSTICS ###
 ###################
 
-#################################################
-### PAIRWISE CORRELATIONS (ORDINAL MODEL) #######
-#################################################
+#############################################
+### PAIRWISE CORRELATIONS (ORDINAL MODEL) ###
+#############################################
 
 correlation_data_ordinal <- complete_ordinal_1 %>%
   dplyr::transmute(
@@ -1191,11 +1191,10 @@ vif_model_ordinal <- lm(
 
 vif(vif_model_ordinal)
 
-###############################################################
-### COMPLETE-CASE BRANT TEST: FOUR-CATEGORY CLIMATE WORRY #####
-###############################################################
+#############################################################
+### COMPLETE-CASE BRANT TEST: FOUR-CATEGORY CLIMATE WORRY ###
+#############################################################
 # Diagnostic check of the proportional odds assumption when climate worry is treated as one ordinal outcome with all four substantive categories: 0 = not worried, 1 = a little worried, 2 = quite worried, 3 = very worried
-
 
 # Define variables used in the four-category diagnostic model
 fourcat_brant_variables <- c(
