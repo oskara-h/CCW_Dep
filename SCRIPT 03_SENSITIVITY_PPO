@@ -1,0 +1,549 @@
+##########################################################
+### CCW SCRIPT 3 - PROPORTIONAL ODDS MODEL SENSITIVITY ###
+##########################################################
+
+library(MASS)
+library(mice)
+library(brant)
+library(purrr)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(gt)
+library(stringr)
+library(ordinal)
+library(broom)
+
+##############################
+### BRANT TEST DIAGNOSTICS ###
+##############################
+
+#final ordinal model formula 
+
+ordinal_formula <- factor(climate_ordinal, ordered = TRUE) ~
+  depression_centered *
+  antisocial_centered +
+  gender_binary +
+  age +
+  ses +
+  university_plans_binary +
+  cannabis_binary +
+  family_conflict_0 +
+  school_dissatisfaction_mean_0 +
+  bullying_mean_0 +
+  no_close_peer_relationship_binary +
+  club_membership_binary +
+  social_media_time_0 +
+  social_media_pressure_0 +
+  reading_time_0 +
+  urbanicity_0 +
+  family_violence_binary
+
+if (!exists("ordinal_completed_data")) {
+  ordinal_completed_data <- mice::complete(
+    Imp_ordinal,
+    action = "all"
+  )
+}
+
+#####################################################
+### COMPLETE-CASE BRANT TEST ########################
+#####################################################
+
+ordinal_model_variables <- c(
+  "climate_ordinal",
+  "depression_centered",
+  "antisocial_centered",
+  "gender_binary",
+  "age",
+  "ses",
+  "university_plans_binary",
+  "cannabis_binary",
+  "family_conflict_0",
+  "school_dissatisfaction_mean_0",
+  "bullying_mean_0",
+  "no_close_peer_relationship_binary",
+  "club_membership_binary",
+  "social_media_time_0",
+  "social_media_pressure_0",
+  "reading_time_0",
+  "urbanicity_0",
+  "family_violence_binary"
+)
+
+complete_case_ordinal <- imputation_data_ordinal %>%
+  dplyr::select(
+    all_of(ordinal_model_variables)
+  ) %>%
+  tidyr::drop_na()
+
+ordinal_model_complete_case <- MASS::polr(
+  formula = ordinal_formula,
+  data = complete_case_ordinal,
+  Hess = TRUE,
+  model = TRUE
+)
+
+brant_complete_case <- brant::brant(
+  ordinal_model_complete_case
+)
+
+brant_complete_case
+
+#####################################################
+### BRANT TEST IN EACH IMPUTED DATASET ##############
+#####################################################
+run_brant_one_imputation <- function(i) {
+  
+  completed_data <- ordinal_completed_data[[i]]
+  
+  model_i <- MASS::polr(
+    formula = ordinal_formula,
+    data = completed_data,
+    Hess = TRUE,
+    model = TRUE
+  )
+  
+  brant_i <- brant::brant(
+    model_i
+  )
+  
+  brant_table_i <- as.data.frame(
+    brant_i
+  ) %>%
+    tibble::rownames_to_column("term") %>%
+    tibble::as_tibble() %>%
+    mutate(
+      imputation = i
+    ) %>%
+    dplyr::select(
+      imputation,
+      term,
+      everything()
+    )
+  
+  return(brant_table_i)
+}
+
+brant_results_all <- purrr::map_dfr(
+  seq_along(ordinal_completed_data),
+  run_brant_one_imputation
+)
+
+print(
+  brant_results_all,
+  n = Inf
+)
+
+###############################
+### SUMMARISE BRANT RESULTS ###
+###############################
+brant_results_all_clean <- brant_results_all %>%
+  rename(
+    chi_square = X2,
+    p_value = probability
+  ) %>%
+  mutate(
+    significant_05 = p_value < .05,
+    significant_01 = p_value < .01
+  )
+
+brant_summary <- brant_results_all_clean %>%
+  group_by(term) %>%
+  summarise(
+    n_imputations = n(),
+    n_p_below_05 = sum(significant_05, na.rm = TRUE),
+    n_p_below_01 = sum(significant_01, na.rm = TRUE),
+    median_chi_square = median(chi_square, na.rm = TRUE),
+    median_p = median(p_value, na.rm = TRUE),
+    min_p = min(p_value, na.rm = TRUE),
+    max_p = max(p_value, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(
+    median_p
+  )
+
+print(
+  brant_summary,
+  n = Inf
+)
+
+# IDENTIFY LIKELY PPO VIOLATIONS
+
+brant_likely_violations <- brant_summary %>%
+  filter(
+    term != "Omnibus",
+    n_p_below_05 >= ceiling(length(ordinal_completed_data) / 2)
+  ) %>%
+  arrange(
+    desc(n_p_below_05),
+    median_p
+  )
+
+print(
+  brant_likely_violations,
+  n = Inf
+)
+
+ppo_nominal_predictors <- brant_likely_violations %>%
+  pull(term)
+
+ppo_nominal_predictors
+
+#####################
+### SUMMARY TABLE ###
+#####################
+brant_summary_gt <- brant_summary %>%
+  mutate(
+    median_chi_square = sprintf("%.2f", median_chi_square),
+    median_p = case_when(
+      median_p < .001 ~ "< .001",
+      TRUE ~ sprintf("%.3f", median_p)
+    ),
+    min_p = case_when(
+      min_p < .001 ~ "< .001",
+      TRUE ~ sprintf("%.3f", min_p)
+    ),
+    max_p = case_when(
+      max_p < .001 ~ "< .001",
+      TRUE ~ sprintf("%.3f", max_p)
+    )
+  ) %>%
+  gt() %>%
+  tab_header(
+    title = "Brant test results across imputed datasets"
+  ) %>%
+  cols_label(
+    term = "Predictor",
+    n_imputations = "Imputed datasets",
+    n_p_below_05 = "p < .05",
+    n_p_below_01 = "p < .01",
+    median_chi_square = "Median chi-square",
+    median_p = "Median p",
+    min_p = "Minimum p",
+    max_p = "Maximum p"
+  ) %>%
+  tab_source_note(
+    source_note = paste0(
+      "Note. The Brant test was run separately in each imputed dataset. ",
+      "Results are diagnostic and are not formally pooled test statistics. ",
+      "Predictors with p < .05 in at least half of the imputed datasets are flagged as likely proportional odds violations."
+    )
+  ) %>%
+  tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+brant_summary_gt
+
+#######################################
+### PARTIAL PROPORTIONAL ODDS MODEL ###
+#######################################
+if (!exists("ordinal_completed_data")) {
+  ordinal_completed_data <- mice::complete(
+    Imp_ordinal,
+    action = "all"
+  )
+}
+
+partial_ordinal_models <- ordinal_completed_data %>%
+  purrr::map(
+    ~ .x %>%
+      mutate(
+        climate_ordinal_f = factor(
+          climate_ordinal,
+          levels = c(0, 1, 2),
+          labels = c(
+            "A little worried",
+            "Quite worried",
+            "Very worried"
+          ),
+          ordered = TRUE
+        )
+      ) %>%
+      ordinal::clm(
+        climate_ordinal_f ~
+          depression_centered *
+          antisocial_centered +
+          gender_binary +
+          age +
+          ses +
+          university_plans_binary +
+          cannabis_binary +
+          family_conflict_0 +
+          school_dissatisfaction_mean_0 +
+          bullying_mean_0 +
+          no_close_peer_relationship_binary +
+          club_membership_binary +
+          social_media_time_0 +
+          social_media_pressure_0 +
+          reading_time_0 +
+          urbanicity_0 +
+          family_violence_binary,
+        
+        nominal = ~
+          depression_centered +
+          club_membership_binary +
+          reading_time_0,
+        
+        data = .,
+        link = "logit",
+        Hess = TRUE,
+        model = TRUE
+      )
+  )
+
+partial_ordinal_results <- partial_ordinal_models %>%
+  purrr::map(
+    ~ broom::tidy(.x)
+  )
+
+pooled_input <- partial_ordinal_results %>%
+  bind_rows(.id = "imputation") %>%
+  mutate(
+    imputation = as.integer(imputation)
+  ) %>%
+  filter(
+    !is.na(estimate),
+    !is.na(std.error)
+  )
+
+pooled_results <- pooled_input %>%
+  group_by(term, coef.type) %>%
+  summarise(
+    m = n(),
+    pooled_estimate = mean(estimate),
+    within_variance = mean(std.error^2),
+    between_variance = var(estimate),
+    total_variance = within_variance + (1 + 1 / m) * between_variance,
+    pooled_se = sqrt(total_variance),
+    lower_ci = pooled_estimate - 1.96 * pooled_se,
+    upper_ci = pooled_estimate + 1.96 * pooled_se,
+    z_value = pooled_estimate / pooled_se,
+    p_value = 2 * pnorm(-abs(z_value)),
+    .groups = "drop"
+  )
+
+pooled_results_or <- pooled_results %>%
+  mutate(
+    is_threshold_specific = str_detect(term, "\\."),
+    is_pure_threshold = coef.type == "intercept" &
+      str_detect(term, "\\(Intercept\\)"),
+    
+    display_estimate = case_when(
+      is_threshold_specific & !is_pure_threshold ~ -pooled_estimate,
+      TRUE ~ pooled_estimate
+    ),
+    display_lower_ci = case_when(
+      is_threshold_specific & !is_pure_threshold ~ -upper_ci,
+      TRUE ~ lower_ci
+    ),
+    display_upper_ci = case_when(
+      is_threshold_specific & !is_pure_threshold ~ -lower_ci,
+      TRUE ~ upper_ci
+    ),
+    
+    odds_ratio = exp(display_estimate),
+    or_lower_ci = exp(display_lower_ci),
+    or_upper_ci = exp(display_upper_ci)
+  ) %>%
+  filter(
+    !is_pure_threshold
+  )
+
+ppo_results_table <- pooled_results_or %>%
+  mutate(
+    domain = case_when(
+      term %in% c(
+        "gender_binary",
+        "age",
+        "ses",
+        "university_plans_binary",
+        "urbanicity_0"
+      ) ~ "Sociodemographic Factors",
+      
+      term %in% c(
+        "depression_centered",
+        "A little worried|Quite worried.depression_centered",
+        "Quite worried|Very worried.depression_centered",
+        "antisocial_centered",
+        "depression_centered:antisocial_centered",
+        "cannabis_binary"
+      ) ~ "Psychosocial Functioning",
+      
+      term %in% c(
+        "family_conflict_0",
+        "family_violence_binary",
+        "bullying_mean_0"
+      ) ~ "Adversity Exposure",
+      
+      term %in% c(
+        "school_dissatisfaction_mean_0",
+        "no_close_peer_relationship_binary",
+        "club_membership_binary",
+        "A little worried|Quite worried.club_membership_binary",
+        "Quite worried|Very worried.club_membership_binary"
+      ) ~ "Social Integration",
+      
+      term %in% c(
+        "social_media_time_0",
+        "social_media_pressure_0",
+        "reading_time_0",
+        "A little worried|Quite worried.reading_time_0",
+        "Quite worried|Very worried.reading_time_0"
+      ) ~ "Media and Cultural Engagement",
+      
+      TRUE ~ "Other"
+    ),
+    
+    term_label = case_when(
+      term == "gender_binary" ~ "Gender (girls)",
+      term == "age" ~ "Age",
+      term == "ses" ~ "Socioeconomic status",
+      term == "university_plans_binary" ~ "University plans",
+      term == "urbanicity_0" ~ "Urbanicity",
+      
+      term == "A little worried|Quite worried.depression_centered" ~
+        "Depressive symptoms: quite/very worried vs. a little worried",
+      term == "Quite worried|Very worried.depression_centered" ~
+        "Depressive symptoms: very worried vs. a little/quite worried",
+      term == "antisocial_centered" ~ "Antisocial traits",
+      term == "depression_centered:antisocial_centered" ~
+        "Depressive symptoms x antisocial traits",
+      term == "cannabis_binary" ~ "Cannabis use",
+      
+      term == "family_conflict_0" ~ "Family conflict",
+      term == "family_violence_binary" ~ "Family violence",
+      term == "bullying_mean_0" ~ "Bullying",
+      
+      term == "school_dissatisfaction_mean_0" ~ "School dissatisfaction",
+      term == "no_close_peer_relationship_binary" ~ "No close peer relationship",
+      term == "A little worried|Quite worried.club_membership_binary" ~
+        "Club membership: quite/very worried vs. a little worried",
+      term == "Quite worried|Very worried.club_membership_binary" ~
+        "Club membership: very worried vs. a little/quite worried",
+      
+      term == "social_media_time_0" ~ "Social media time",
+      term == "social_media_pressure_0" ~ "Social media pressure",
+      term == "A little worried|Quite worried.reading_time_0" ~
+        "Reading time: quite/very worried vs. a little worried",
+      term == "Quite worried|Very worried.reading_time_0" ~
+        "Reading time: very worried vs. a little/quite worried",
+      
+      TRUE ~ term
+    ),
+    
+    effect_type = case_when(
+      is_threshold_specific ~ "Threshold-specific",
+      coef.type == "location" ~ "Proportional",
+      TRUE ~ coef.type
+    ),
+    
+    significance = case_when(
+      p_value < .001 ~ "***",
+      p_value < .01 ~ "**",
+      p_value < .05 ~ "*",
+      TRUE ~ ""
+    ),
+    
+    OR_CI = paste0(
+      sprintf("%.2f", odds_ratio),
+      " (",
+      sprintf("%.2f", or_lower_ci),
+      ", ",
+      sprintf("%.2f", or_upper_ci),
+      ")"
+    ),
+    
+    p = case_when(
+      p_value < .001 ~ paste0("< .001", significance),
+      TRUE ~ paste0(sprintf("%.3f", p_value), significance)
+    ),
+    
+    order = case_when(
+      term == "gender_binary" ~ 1,
+      term == "age" ~ 2,
+      term == "ses" ~ 3,
+      term == "university_plans_binary" ~ 4,
+      term == "urbanicity_0" ~ 5,
+      
+      term == "A little worried|Quite worried.depression_centered" ~ 6,
+      term == "Quite worried|Very worried.depression_centered" ~ 7,
+      term == "antisocial_centered" ~ 8,
+      term == "depression_centered:antisocial_centered" ~ 9,
+      term == "cannabis_binary" ~ 10,
+      
+      term == "family_conflict_0" ~ 11,
+      term == "family_violence_binary" ~ 12,
+      term == "bullying_mean_0" ~ 13,
+      
+      term == "school_dissatisfaction_mean_0" ~ 14,
+      term == "no_close_peer_relationship_binary" ~ 15,
+      term == "A little worried|Quite worried.club_membership_binary" ~ 16,
+      term == "Quite worried|Very worried.club_membership_binary" ~ 17,
+      
+      term == "social_media_time_0" ~ 18,
+      term == "social_media_pressure_0" ~ 19,
+      term == "A little worried|Quite worried.reading_time_0" ~ 20,
+      term == "Quite worried|Very worried.reading_time_0" ~ 21,
+      
+      TRUE ~ 99
+    )
+  ) %>%
+  arrange(order) %>%
+  dplyr::select(
+    domain,
+    term_label,
+    effect_type,
+    OR_CI,
+    p
+  ) %>%
+  mutate(
+    across(
+      where(is.character),
+      ~ iconv(.x, from = "", to = "UTF-8", sub = "")
+    )
+  )
+
+ppo_results_gt <- ppo_results_table %>%
+  gt(
+    groupname_col = "domain"
+  ) %>%
+  tab_header(
+    title = "Partial proportional odds model predicting higher climate worry"
+  ) %>%
+  cols_label(
+    term_label = "Variable",
+    effect_type = "Effect type",
+    OR_CI = "OR (95% CI)",
+    p = "P-value"
+  ) %>%
+  tab_source_note(
+    source_note = paste0(
+      "Note. OR = odds ratio; CI = confidence interval. ",
+      "Results are pooled across multiply imputed datasets using Rubin's rules. ",
+      "Threshold-specific effects were inverted so that all odds ratios consistently represent higher odds of being in a higher climate worry category. ",
+      "This sensitivity model does not use municipality-clustered standard errors, because cluster-robust variance estimation is not implemented for clm models with nominal effects in the applied software."
+    )
+  ) %>%
+  tab_style(
+    style = list(
+      cell_text(
+        weight = "bold",
+        style = "italic"
+      )
+    ),
+    locations = cells_row_groups()
+  ) %>%
+  tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+ppo_results_gt
