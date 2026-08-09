@@ -1,0 +1,1276 @@
+###########################
+### SCRIPT 1 - CCW ########
+### DATA PRE-PROCESSING ###
+###########################
+
+# LOAD PACKAGES
+library(haven)
+library(tidyverse)
+library(tidyr)
+library(janitor)
+library(psych)
+library(mice)
+library(naniar)
+library(car)
+library(lme4)
+library(ordinal)
+library(tibble)
+library(dplyr)
+library(MASS)
+library(brant)
+
+# READ DATA
+ # Data not publicly avaliable
+
+############################
+### BASIC PRE-PROCESSING ###
+############################
+
+# FILTER DATASET TO INCLUDE 2022 WAVE ONLY
+ungdata <- ungdata %>%
+  rename(year = 1) # Rename to avoid issues with the Norwegian letter "å"
+
+ungdata_2022_only <- ungdata %>%
+  filter(year == 2022)
+
+ungdata_2022_only %>%
+  count(year)
+
+# CLEAN VARIABLE NAMES
+ungdata_2022_only <- ungdata_2022_only %>%
+  clean_names()
+
+
+# RENAME VARIABLES
+ungdata_2022_analytic <- ungdata_2022_only %>%
+  rename(
+    climate_worry = klima1,
+    gender = kjonn,
+    grade = klasse,
+    ses = sos,
+    university_plans = framtid5,
+    
+    depression1 = depr1,
+    depression2 = depr2,
+    depression3 = depr3,
+    depression4 = depr4,
+    depression5 = depr5,
+    depression6 = depr6,
+    
+    antisocial_traits1 = atfpro1,
+    antisocial_traits12 = atfpro12,
+    antisocial_traits15 = atfpro15,
+    antisocial_traits16 = atfpro16,
+    antisocial_traits18 = atfpro18,
+    antisocial_traits25 = atfpro25,
+    
+    cannabis_use = atfpro10,
+    family_conflict = foreldre8,
+    
+    school1 = skole1,
+    school2 = skole2,
+    school3 = skole3,
+    school6 = skole6,
+    
+    peer_relationship = venner2,
+    club_membership = orgmedl1,
+    
+    social_media_time = media12,
+    social_media_pressure = press4,
+    reading_time = media10, 
+    
+    bullying_by_peers = mobb2,
+    digital_bullying_by_peers = mobb3,
+
+    municipality = kommune,
+    county = fylke,
+    centrality = sentralitet,
+
+    violence8 = vold8,
+    violence9 = vold9 
+  ) %>%
+  dplyr::select(
+    climate_worry,
+    gender,
+    grade,
+    ses,
+    university_plans,
+    depression1:depression6,
+    antisocial_traits1,
+    antisocial_traits12,
+    antisocial_traits15,
+    antisocial_traits16,
+    antisocial_traits18,
+    antisocial_traits25,
+    cannabis_use,
+    family_conflict,
+    school1,
+    school2,
+    school3,
+    school6,
+    peer_relationship,
+    club_membership,
+    social_media_time,
+    social_media_pressure,
+    reading_time,
+    bullying_by_peers,
+    digital_bullying_by_peers,
+    municipality,
+    county,
+    centrality,
+    violence8, 
+    violence9  
+  )
+
+# VERIFY VALUE LABELS AGAINST UNGDATA CODEBOOK
+# Labels inspected to confirm coding direction before recoding
+
+attr(ungdata_2022_only$kjonn, "labels")
+attr(ungdata_2022_only$framtid5, "labels")
+attr(ungdata_2022_only$venner2, "labels")
+attr(ungdata_2022_only$orgmedl1, "labels")
+
+attr(ungdata_2022_only$klima1, "labels")
+attr(ungdata_2022_only$atfpro10, "labels")
+
+attr(ungdata_2022_only$mobb2, "labels")
+attr(ungdata_2022_only$mobb3, "labels")
+
+attr(ungdata_2022_only$skole1, "labels")
+attr(ungdata_2022_only$skole2, "labels")
+attr(ungdata_2022_only$skole3, "labels")
+attr(ungdata_2022_only$skole6, "labels")
+
+attr(ungdata_2022_only$vold8, "labels")
+attr(ungdata_2022_only$vold9, "labels")
+
+attr(ungdata_2022_only$kommune, "labels")
+attr(ungdata_2022_only$fylke, "labels")
+attr(ungdata_2022_only$sentralitet, "labels")
+
+# CHECK ANALYTIC DATASET
+dim(ungdata_2022_analytic)
+glimpse(ungdata_2022_analytic)
+
+# EXAMINE MISSING DATA AND VARIABLE DISTRIBUTIONS
+ungdata_2022_analytic %>%
+  summarise(
+    across(
+      everything(),
+      ~ sum(is.na(.))
+    )
+  ) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "variable",
+    values_to = "n_missing"
+  ) %>%
+  arrange(desc(n_missing))
+
+#####################################################
+### CREATE DEPRESSION SCALE USING ORIGINAL CODING ###
+#####################################################
+# Used for defining the depressed analytic sample.
+
+ungdata_2022_analytic <- ungdata_2022_analytic %>%
+  mutate(
+    depression_n = rowSums(
+      !is.na(dplyr::select(., depression1:depression6))
+    ),
+    
+    depression_mean_original = ifelse(
+      depression_n >= 5,
+      rowMeans(
+        dplyr::select(., depression1:depression6),
+        na.rm = TRUE
+      ),
+      NA_real_
+    )
+  )
+
+summary(ungdata_2022_analytic$depression_mean_original)
+
+table(
+  ungdata_2022_analytic$depression_n,
+  useNA = "ifany"
+)
+
+# RESTRICT TO ADOLESCENTS WITH HIGH DEPRESSIVE SYMPTOMS
+# The threshold follows the original 1-based response scale.
+
+depressed_sample <- ungdata_2022_analytic %>%
+  filter(depression_mean_original >= 3)
+
+dim(depressed_sample)
+
+##########################################
+### RESCALE VARIABLES TO START AT ZERO ###
+##########################################
+# Original coding is retained conceptually, but the lowest response category is coded as 0.
+
+depressed_sample <- depressed_sample %>%
+  mutate(
+    across(
+      c(
+        depression1:depression6,
+        antisocial_traits1,
+        antisocial_traits12,
+        antisocial_traits15,
+        antisocial_traits16,
+        antisocial_traits18,
+        antisocial_traits25,
+        school1,
+        school2,
+        school3,
+        school6,
+        peer_relationship,
+        club_membership,
+        social_media_time,
+        social_media_pressure,
+        reading_time,
+ 	bullying_by_peers,
+        digital_bullying_by_peers,
+        centrality
+      ),
+      ~ .x - 1,
+      .names = "{.col}_0"
+    )
+  )
+  
+# CREATE 0-BASED DEPRESSION SCALE FOR ANALYSES
+
+depressed_sample <- depressed_sample %>%
+  mutate(
+    depression_mean_0 = ifelse(
+      depression_n >= 5,
+      rowMeans(
+        dplyr::select(., depression1_0:depression6_0),
+        na.rm = TRUE
+      ),
+      NA_real_
+    )
+  )
+
+summary(depressed_sample$depression_mean_0)
+
+###############################
+### CLIMATE WORRY VARIABLES ###
+###############################
+
+depressed_sample <- depressed_sample %>%
+  mutate(
+    # Set "don't know" to missing
+    climate_worry = ifelse(
+      climate_worry == 5,
+      NA_real_,
+      climate_worry
+    ),
+    
+    # 0-based version of the original climate worry variable
+    # 0 = not worried
+    # 1 = a little worried
+    # 2 = quite worried
+    # 3 = very worried
+    climate_worry_0 = case_when(
+      climate_worry == 1 ~ 0,
+      climate_worry == 2 ~ 1,
+      climate_worry == 3 ~ 2,
+      climate_worry == 4 ~ 3,
+      TRUE ~ NA_real_
+    ),
+    
+    # Binary outcome:
+    # 0 = no worry
+    # 1 = any worry
+    ## For the binary regression analyses, this variable is subsequently reverse-coded so that the modeled outcome is:
+     # 1 = no climate worry
+     # 0 = any climate worry
+     # This corresponds to the outcome coding reported in the manuscript.
+    climate_binary = case_when(
+      climate_worry == 1 ~ 0,
+      climate_worry %in% c(2, 3, 4) ~ 1,
+      TRUE ~ NA_real_
+    ),
+    
+    # Ordinal outcome among worried only:
+    # 0 = a little worried
+    # 1 = quite worried
+    # 2 = very worried
+    climate_ordinal = case_when(
+      climate_worry == 2 ~ 0,
+      climate_worry == 3 ~ 1,
+      climate_worry == 4 ~ 2,
+      TRUE ~ NA_real_
+    )
+  )
+
+table(
+  depressed_sample$climate_worry,
+  useNA = "ifany"
+) # Check distribution of climate worry within the depressed subsample after setting "dont know" to missing
+
+table(
+  depressed_sample$climate_worry_0,
+  useNA = "ifany"
+) # Check if rescaling was succesfull
+
+table(
+  depressed_sample$climate_binary,
+  useNA = "ifany"
+) # Check distribution for binary CW variable
+
+table(
+  depressed_sample$climate_ordinal,
+  useNA = "ifany"
+) # Check distribution for ordinal CW variable (i,e., CW among worried individuals)
+
+
+# DISTRIBUTION OF CCW RESPONSES IN DEPRESSED SUBSAMPLE
+
+# Recreate depressed sample BEFORE climate worry recoding
+
+depressed_climate_descriptives <- ungdata_2022_analytic %>%
+  filter(depression_mean_original >= 3)
+
+# Total depressed sample size
+
+total_n <- nrow(depressed_climate_descriptives)
+
+# Distribution including:
+# 1 = Not worried
+# 2 = A little worried
+# 3 = Quite worried
+# 4 = Very worried
+# 5 = Don't know
+# NA = Missing
+
+climate_distribution <- depressed_climate_descriptives %>%
+  mutate(
+    climate_response = case_when(
+      climate_worry == 1 ~ "Not worried",
+      climate_worry == 2 ~ "A little worried",
+      climate_worry == 3 ~ "Quite worried",
+      climate_worry == 4 ~ "Very worried",
+      climate_worry == 5 ~ "Don't know",
+      is.na(climate_worry) ~ "Missing",
+      TRUE ~ "Other"
+    )
+  ) %>%
+  count(climate_response) %>%
+  mutate(
+    percent = round(100 * n / total_n, 1)
+  ) %>%
+  arrange(
+    factor(
+      climate_response,
+      levels = c(
+        "Not worried",
+        "A little worried",
+        "Quite worried",
+        "Very worried",
+        "Don't know",
+        "Missing"
+      )
+    )
+  )
+
+climate_distribution
+
+# ANALYTIC SAMPLE CCW DISTRIBUTION (AFTER SETTING DON'T KNOW TO MISSING)
+analytic_distribution <- depressed_climate_descriptives %>%
+  filter(climate_worry %in% c(1, 2, 3, 4))
+
+analytic_n <- nrow(analytic_distribution)
+
+analytic_distribution_summary <- analytic_distribution %>%
+  mutate(
+    climate_response = case_when(
+      climate_worry == 1 ~ "Not worried",
+      climate_worry == 2 ~ "A little worried",
+      climate_worry == 3 ~ "Quite worried",
+      climate_worry == 4 ~ "Very worried"
+    )
+  ) %>%
+  count(climate_response) %>%
+  mutate(
+    percent = round(100 * n / analytic_n, 1)
+  )
+
+analytic_distribution_summary
+######################################
+### CREATE ANTISOCIAL TRAITS SCALE ###
+######################################
+# Require at least 4 of 6 items completed
+
+depressed_sample <- depressed_sample %>%
+  mutate(
+    
+    antisocial_n = rowSums(
+      !is.na(
+        dplyr::select(
+          .,
+          antisocial_traits1_0,
+          antisocial_traits12_0,
+          antisocial_traits15_0,
+          antisocial_traits16_0,
+          antisocial_traits18_0,
+          antisocial_traits25_0
+        )
+      )
+    ),
+    
+    antisocial_mean_0 = ifelse(
+      antisocial_n >= 4,
+      
+      rowMeans(
+        dplyr::select(
+          .,
+          antisocial_traits1_0,
+          antisocial_traits12_0,
+          antisocial_traits15_0,
+          antisocial_traits16_0,
+          antisocial_traits18_0,
+          antisocial_traits25_0
+        ),
+        na.rm = TRUE
+      ),
+      
+      NA_real_
+    )
+  )
+
+summary(depressed_sample$antisocial_mean_0)
+
+table(
+  depressed_sample$antisocial_n,
+  useNA = "ifany"
+) # Response distribution check
+
+# MEAN-CENTER DEPRESSION AND ANTISOCIAL TRAITS
+
+# Continuous predictors included in interaction terms are mean-centered prior to multiple imputation and modelling
+
+depressed_sample <- depressed_sample %>%
+  mutate(
+    
+    depression_centered =
+      depression_mean_0 -
+      mean(depression_mean_0, na.rm = TRUE),
+    
+    antisocial_centered =
+      antisocial_mean_0 -
+      mean(antisocial_mean_0, na.rm = TRUE)
+    
+  )
+
+# CHECK CENTERED VARIABLES
+
+summary(depressed_sample$depression_centered)
+
+summary(depressed_sample$antisocial_centered)
+
+mean(
+  depressed_sample$depression_centered,
+  na.rm = TRUE
+)
+
+mean(
+  depressed_sample$antisocial_centered,
+  na.rm = TRUE
+)
+
+###########################################
+### CREATE SCHOOL DISSATISFACTION SCALE ###
+###########################################
+# School1, school2, and school3 are retained as-is so higher values indicate more school dissatisfaction.
+# School6 is reverse-coded so higher values indicate more dread about going to school.
+# Require at least 3 of 4 items completed.
+
+depressed_sample <- depressed_sample %>%
+  mutate(
+    school1_dissatisfaction_0 = school1_0,
+    school2_dissatisfaction_0 = school2_0,
+    school3_dissatisfaction_0 = school3_0,
+    school6_dissatisfaction_0 = 3 - school6_0
+  )
+
+depressed_sample <- depressed_sample %>%
+  mutate(
+    school_dissatisfaction_n = rowSums(
+      !is.na(
+        dplyr::select(
+          .,
+          school1_dissatisfaction_0,
+          school2_dissatisfaction_0,
+          school3_dissatisfaction_0,
+          school6_dissatisfaction_0
+        )
+      )
+    ),
+    
+    school_dissatisfaction_mean_0 = ifelse(
+      school_dissatisfaction_n >= 3,
+      rowMeans(
+        dplyr::select(
+          .,
+          school1_dissatisfaction_0,
+          school2_dissatisfaction_0,
+          school3_dissatisfaction_0,
+          school6_dissatisfaction_0
+        ),
+        na.rm = TRUE
+      ),
+      NA_real_
+    )
+  )
+
+summary(depressed_sample$school_dissatisfaction_mean_0)
+
+table(
+  depressed_sample$school_dissatisfaction_n,
+  useNA = "ifany"
+)
+
+###################################
+### CREATE BULLYING SCALE #########
+###################################
+# Bullying items are reverse-coded so higher values indicate more bullying.
+# Require 2 of 2 items completed.
+
+depressed_sample <- depressed_sample %>%
+  mutate(
+    bullying_by_peers_rev_0 = 5 - bullying_by_peers_0,
+    digital_bullying_by_peers_rev_0 = 5 - digital_bullying_by_peers_0
+  )
+
+depressed_sample <- depressed_sample %>%
+  mutate(
+    bullying_n = rowSums(
+      !is.na(
+        dplyr::select(
+          .,
+          bullying_by_peers_rev_0,
+          digital_bullying_by_peers_rev_0
+        )
+      )
+    ),
+    
+    bullying_mean_0 = ifelse(
+      bullying_n >= 2,
+      rowMeans(
+        dplyr::select(
+          .,
+          bullying_by_peers_rev_0,
+          digital_bullying_by_peers_rev_0
+        ),
+        na.rm = TRUE
+      ),
+      NA_real_
+    )
+  )
+
+summary(depressed_sample$bullying_mean_0)
+
+table(
+  depressed_sample$bullying_n,
+  useNA = "ifany"
+)
+
+#################################
+### CREATE AGE PROXY VARIABLE ###
+#################################
+# Age is derived from school grade as a proxy indicator.
+# Grades are coded from 13.5 years (8th grade) to 18.5 years (13th grade).
+
+depressed_sample <- depressed_sample %>%
+  mutate(
+    age = grade + 12.5
+  )
+
+table(
+  depressed_sample$grade,
+  depressed_sample$age,
+  useNA = "ifany"
+)
+
+summary(depressed_sample$age)
+
+#################################
+### CREATE URBANICITY VARIABLE ##
+#################################
+# Reverse zero-based SSB centrality coding so that
+# higher values indicate greater urbanicity.
+# 0 = least urban
+# 5 = most urban
+
+depressed_sample <- depressed_sample %>%
+  mutate(
+    urbanicity_0 = 5 - centrality_0
+  )
+
+table(
+  depressed_sample$centrality_0,
+  depressed_sample$urbanicity_0,
+  useNA = "ifany"
+)
+
+summary(depressed_sample$urbanicity_0)
+
+################################
+### CREATE BINARY COVARIATES ###
+################################
+
+depressed_sample <- depressed_sample %>%
+  mutate(
+    
+    # Female = 1, Male = 0
+     gender_binary = case_when(
+      gender == 1 ~ 0,
+      gender == 2 ~ 1,
+      TRUE ~ NA_real_
+    ),
+    
+    # University plans:
+     # Yes = 1
+     # No / don't know = 0
+     university_plans_binary = case_when(
+      university_plans == 1 ~ 1,
+      university_plans %in% c(2,3) ~ 0,
+      TRUE ~ NA_real_
+    ),
+
+    # No close friend:
+     # Definitely no / no I don't think so = 1
+     # Otherwise = 0
+     no_close_peer_relationship_binary = case_when(
+     peer_relationship %in% c(1,2) ~ 0,
+     peer_relationship %in% c(3,4) ~ 1,
+     TRUE ~ NA_real_
+    ),
+        
+    # Club membership:
+     # Current member = 1
+     # Previous / never = 0
+     club_membership_binary = case_when(
+      club_membership == 1 ~ 1,
+      club_membership %in% c(2,3) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    # Family violence exposure:
+     # 0 = no reported family violence exposure
+     # 1 = reported physical violence and/or witnessing violence in the family
+
+    family_violence_binary = case_when(
+      violence8 > 1 | violence9 > 1 ~ 1,
+      violence8 == 1 & violence9 == 1 ~ 0,
+      TRUE ~ NA_real_
+    ),
+   # Family conflict:
+   # Original item: "There is often conflict between the adults in my family"
+    # 1 = fits very well, 4 = fits very poorly
+    # Recode so that higher values indicate greater family conflict
+   family_conflict_0 = case_when(
+     family_conflict == 1 ~ 3,
+     family_conflict == 2 ~ 2,
+     family_conflict == 3 ~ 1,
+     family_conflict == 4 ~ 0,
+     TRUE ~ NA_real_
+    ),
+   
+   # Binary cannabis use variable:
+    # 0 = no cannabis use in the past year
+    # 1 = any cannabis use in the past year
+    cannabis_binary = case_when(
+      cannabis_use == 1 ~ 0,
+      cannabis_use %in% c(2, 3, 4, 5) ~ 1,
+      TRUE ~ NA_real_
+    )
+  )
+
+# CHECK RECODING
+
+table(
+  depressed_sample$gender,
+  depressed_sample$gender_binary,
+  useNA = "ifany"
+)
+
+table(
+  depressed_sample$university_plans,
+  depressed_sample$university_plans_binary,
+  useNA = "ifany"
+)
+
+table(
+  depressed_sample$peer_relationship,
+  depressed_sample$no_close_peer_relationship_binary,
+  useNA = "ifany"
+)
+
+table(
+  depressed_sample$club_membership,
+  depressed_sample$club_membership_binary,
+  useNA = "ifany"
+)
+
+table(
+  depressed_sample$cannabis_use,
+  depressed_sample$cannabis_binary,
+  useNA = "ifany"
+)
+
+table(
+  depressed_sample$family_conflict,
+  depressed_sample$family_conflict_0,
+  useNA = "ifany"
+
+)
+table(
+  violence8 = depressed_sample$violence8,
+  violence9 = depressed_sample$violence9,
+  family_violence_binary = depressed_sample$family_violence_binary,
+  useNA = "ifany"
+
+)
+
+#########################
+### CHRONBACH'S ALPHA ###
+#########################
+
+# Cronbach's alpha is estimated both in the full 2022 sample
+# and in the depressed analytic subsample.
+
+# Prepare scale variables in the full 2022 sample
+
+ungdata_2022_analytic <- ungdata_2022_analytic %>%
+  mutate(
+    across(
+      c(
+        depression1:depression6,
+        antisocial_traits1,
+        antisocial_traits12,
+        antisocial_traits15,
+        antisocial_traits16,
+        antisocial_traits18,
+        antisocial_traits25,
+        school1,
+        school2,
+        school3,
+        school6,
+        bullying_by_peers,
+        digital_bullying_by_peers
+      ),
+      ~ .x - 1,
+      .names = "{.col}_0"
+    ),
+    
+    school1_dissatisfaction_0 = school1_0,
+    school2_dissatisfaction_0 = school2_0,
+    school3_dissatisfaction_0 = school3_0,
+    school6_dissatisfaction_0 = 3 - school6_0,
+    
+    bullying_by_peers_rev_0 = 5 - bullying_by_peers_0,
+    digital_bullying_by_peers_rev_0 = 5 - digital_bullying_by_peers_0
+  )
+
+# Full 2022 sample
+
+depression_alpha_full <- ungdata_2022_analytic %>%
+  dplyr::select(depression1_0:depression6_0) %>%
+  psych::alpha()
+
+antisocial_alpha_full <- ungdata_2022_analytic %>%
+  dplyr::select(
+    antisocial_traits1_0,
+    antisocial_traits12_0,
+    antisocial_traits15_0,
+    antisocial_traits16_0,
+    antisocial_traits18_0,
+    antisocial_traits25_0
+  ) %>%
+  psych::alpha()
+
+school_alpha_full <- ungdata_2022_analytic %>%
+  dplyr::select(
+    school1_dissatisfaction_0,
+    school2_dissatisfaction_0,
+    school3_dissatisfaction_0,
+    school6_dissatisfaction_0
+  ) %>%
+  psych::alpha()
+
+bullying_alpha_full <- ungdata_2022_analytic %>%
+  dplyr::select(
+    bullying_by_peers_rev_0,
+    digital_bullying_by_peers_rev_0
+  ) %>%
+  psych::alpha()
+
+# Depressed analytic subsample
+
+depression_alpha_subsample <- depressed_sample %>%
+  dplyr::select(depression1_0:depression6_0) %>%
+  psych::alpha()
+
+antisocial_alpha_subsample <- depressed_sample %>%
+  dplyr::select(
+    antisocial_traits1_0,
+    antisocial_traits12_0,
+    antisocial_traits15_0,
+    antisocial_traits16_0,
+    antisocial_traits18_0,
+    antisocial_traits25_0
+  ) %>%
+  psych::alpha()
+
+school_alpha_subsample <- depressed_sample %>%
+  dplyr::select(
+    school1_dissatisfaction_0,
+    school2_dissatisfaction_0,
+    school3_dissatisfaction_0,
+    school6_dissatisfaction_0
+  ) %>%
+  psych::alpha()
+
+bullying_alpha_subsample <- depressed_sample %>%
+  dplyr::select(
+    bullying_by_peers_rev_0,
+    digital_bullying_by_peers_rev_0
+  ) %>%
+  psych::alpha()
+
+# Summary table
+
+cronbach_alpha_summary <- tibble::tibble(
+  Scale = c(
+    "Depressive symptoms",
+    "Antisocial traits",
+    "School dissatisfaction",
+    "Bullying"
+  ),
+  `Full 2022 sample` = c(
+    round(depression_alpha_full$total$raw_alpha, 3),
+    round(antisocial_alpha_full$total$raw_alpha, 3),
+    round(school_alpha_full$total$raw_alpha, 3),
+    round(bullying_alpha_full$total$raw_alpha, 3)
+  ),
+  `Depressed subsample` = c(
+    round(depression_alpha_subsample$total$raw_alpha, 3),
+    round(antisocial_alpha_subsample$total$raw_alpha, 3),
+    round(school_alpha_subsample$total$raw_alpha, 3),
+    round(bullying_alpha_subsample$total$raw_alpha, 3)
+  )
+)
+
+cronbach_alpha_summary
+
+##############################################
+### MUNICIPALITY CLUSTERING: NULL ICC MODELS #
+##############################################
+# Prepare complete-case data for the binary outcome
+icc_binary_data <- depressed_sample %>%
+  filter(
+    !is.na(climate_binary),
+    !is.na(municipality)
+  ) %>%
+  mutate(
+    climate_disengagement = 1 - climate_binary,
+    municipality = factor(municipality)
+  )
+
+# Prepare complete-case data for the ordinal outcome
+icc_ordinal_data <- depressed_sample %>%
+  filter(
+    !is.na(climate_ordinal),
+    !is.na(municipality)
+  ) %>%
+  mutate(
+    climate_ordinal = factor(
+      climate_ordinal,
+      ordered = TRUE
+    ),
+    municipality = factor(municipality)
+  )
+
+# Binary null model:
+# outcome = climate disengagement
+# 1 = no climate worry
+# 0 = any climate worry
+icc_binary_model <- lme4::glmer(
+  climate_disengagement ~ 1 + (1 | municipality),
+  data = icc_binary_data,
+  family = binomial(link = "logit"),
+  control = glmerControl(
+    optimizer = "bobyqa",
+    optCtrl = list(maxfun = 100000)
+  )
+)
+
+# Ordinal null model:
+# outcome = climate worry severity among worried adolescents
+# 0 = a little worried
+# 1 = quite worried
+# 2 = very worried
+icc_ordinal_model <- ordinal::clmm(
+  climate_ordinal ~ 1 + (1 | municipality),
+  data = icc_ordinal_data,
+  link = "logit",
+  Hess = TRUE
+)
+
+# Extract municipality-level variance components
+binary_municipality_variance <- as.data.frame(
+  lme4::VarCorr(icc_binary_model)
+)$vcov[1]
+
+ordinal_municipality_variance <- as.numeric(
+  ordinal::VarCorr(icc_ordinal_model)$municipality
+)
+
+# Compute ICCs using the latent-variable logistic residual variance
+# pi^2 / 3 is used for logistic mixed models.
+icc_summary <- tibble::tibble(
+  outcome = c(
+    "Climate disengagement",
+    "Climate worry severity among worried adolescents"
+  ),
+  model = c(
+    "Binary logistic null model",
+    "Ordinal logistic null model"
+  ),
+  n_observations = c(
+    nrow(icc_binary_data),
+    nrow(icc_ordinal_data)
+  ),
+  n_municipalities = c(
+    dplyr::n_distinct(icc_binary_data$municipality),
+    dplyr::n_distinct(icc_ordinal_data$municipality)
+  ),
+  municipality_variance = c(
+    binary_municipality_variance,
+    ordinal_municipality_variance
+  ),
+  residual_variance = pi^2 / 3,
+  icc = municipality_variance / (municipality_variance + residual_variance)
+)
+
+icc_summary
+
+####################################
+### NOT AT ALL WORRIED BY GENDER ###
+####################################
+
+not_worried_by_gender_main <- depressed_sample %>%
+  filter(
+    !is.na(gender_binary),
+    !is.na(climate_worry),
+    climate_worry %in% c(1, 2, 3, 4)
+  ) %>%
+  mutate(
+    gender_label = case_when(
+      gender_binary == 0 ~ "boys",
+      gender_binary == 1 ~ "girls"
+    ),
+    not_worried = climate_worry == 1
+  ) %>%
+  group_by(gender_label) %>%
+  summarise(
+    n_total = n(),
+    n_not_worried = sum(not_worried),
+    percent_not_worried = round(100 * n_not_worried / n_total, 1),
+    .groups = "drop"
+  )
+
+not_worried_by_gender_main
+##############################################################################
+### SELECT VARIABLES FOR MODEL-SPECIFIC IMPUTATION DATASETS ##################
+##############################################################################
+
+# OUTCOMES
+outcomes <- depressed_sample %>%
+  dplyr::select(
+    climate_binary,
+    climate_ordinal
+  )
+
+# MAIN ANALYTIC COVARIATES
+# These variables are included in the primary regression models.
+
+main_covariates <- depressed_sample %>%
+  dplyr::select(
+    gender_binary,
+    age,
+    ses,
+    university_plans_binary,
+    depression_centered,
+    antisocial_centered,
+    cannabis_binary,
+    family_conflict_0,
+    school_dissatisfaction_mean_0,
+    bullying_mean_0,
+    no_close_peer_relationship_binary,
+    club_membership_binary,
+    social_media_time_0,
+    social_media_pressure_0,
+    reading_time_0,
+    urbanicity_0,
+    municipality,
+    family_violence_binary
+  )
+
+##########################################################
+### MULTIPLE IMPUTATION ###
+##########################################################
+
+imputation_data <- bind_cols(
+  outcomes,
+  main_covariates
+)
+
+mice::md.pattern(imputation_data)
+
+gg_miss_upset(
+  main_covariates
+)
+
+####################################
+### IMPUTATION FOR ORDINAL MODEL ###
+####################################
+# Restrict to participants reporting any climate worry.
+
+imputation_data_ordinal <- imputation_data %>%
+  filter(!is.na(climate_ordinal)) %>% # individuals reporting "not at all worried" removed from this model
+  dplyr::select(
+    -climate_binary
+  )
+
+# Dry run
+init_imp_ordinal <- mice(
+  imputation_data_ordinal,
+  maxit = 0
+)
+
+predictor_matrix_ordinal <- init_imp_ordinal$predictorMatrix
+imp_method_ordinal <- init_imp_ordinal$method
+
+# Avoid imputing outcome or complete depression variable
+
+imp_method_ordinal["climate_ordinal"] <- ""
+imp_method_ordinal["depression_centered"] <- ""
+
+# Run multiple imputation
+
+set.seed(12345)
+
+Imp_ordinal <- mice(
+  imputation_data_ordinal,
+  m = 10,
+  maxit = 5,
+  method = imp_method_ordinal,
+  predictorMatrix = predictor_matrix_ordinal
+)
+
+# Check completed data
+
+complete_ordinal_1 <- complete(Imp_ordinal, 1)
+
+colSums(
+  is.na(complete_ordinal_1)
+)
+
+####################################
+### IMPUTATION FOR BINARY MODEL ####
+####################################
+# Restrict to participants with observed climate worry response.
+
+imputation_data_binary <- imputation_data %>%
+  filter(!is.na(climate_binary)) %>% 
+  dplyr::select(
+    -climate_ordinal
+  )
+
+# Dry run
+init_imp_binary <- mice(
+  imputation_data_binary,
+  maxit = 0
+)
+
+predictor_matrix_binary <- init_imp_binary$predictorMatrix
+imp_method_binary <- init_imp_binary$method
+
+# Do not impute outcome or complete depression variable
+
+imp_method_binary["climate_binary"] <- ""
+imp_method_binary["depression_centered"] <- ""
+
+# Run multiple imputation
+
+set.seed(12345)
+
+Imp_binary <- mice(
+  imputation_data_binary,
+  m = 10,
+  maxit = 5,
+  method = imp_method_binary,
+  predictorMatrix = predictor_matrix_binary
+)
+
+# Check completed data
+
+complete_binary_1 <- complete(Imp_binary, 1)
+
+colSums(
+  is.na(complete_binary_1)
+)
+
+###################
+### DIAGNOSTICS ###
+###################
+
+#################################################
+### PAIRWISE CORRELATIONS (ORDINAL MODEL) #######
+#################################################
+
+correlation_data_ordinal <- complete_ordinal_1 %>%
+  dplyr::transmute(
+    climate_ordinal = as.numeric(climate_ordinal),
+    gender_binary,
+    age,
+    ses,
+    university_plans_binary,
+    urbanicity_0,
+    depression_centered,
+    antisocial_centered,
+    cannabis_binary,
+    family_conflict_0,
+    family_violence_binary,
+    bullying_mean_0,
+    school_dissatisfaction_mean_0,
+    no_close_peer_relationship_binary,
+    club_membership_binary,
+    social_media_time_0,
+    social_media_pressure_0,
+    reading_time_0
+  )
+
+correlation_matrix_ordinal <- cor(
+  correlation_data_ordinal,
+  use = "pairwise.complete.obs"
+)
+
+round(
+  correlation_matrix_ordinal,
+  2
+)
+##################################################
+### VARIANCE INFLATION FACTORS (ORDINAL MODEL) ###
+##################################################
+
+vif_model_ordinal <- lm(
+  as.numeric(climate_ordinal) ~
+    depression_centered +
+    antisocial_centered +
+    gender_binary +
+    age +
+    ses +
+    university_plans_binary +
+    cannabis_binary +
+    family_conflict_0 +
+    school_dissatisfaction_mean_0 +
+    bullying_mean_0 +
+    no_close_peer_relationship_binary +
+    club_membership_binary +
+    social_media_time_0 +
+    social_media_pressure_0 +
+    reading_time_0 + 
+    urbanicity_0 + 
+    family_violence_binary,
+  
+  data = complete_ordinal_1
+)
+
+vif(vif_model_ordinal)
+
+###############################################################
+### COMPLETE-CASE BRANT TEST: FOUR-CATEGORY CLIMATE WORRY #####
+###############################################################
+# Diagnostic check of the proportional odds assumption when climate worry is treated as one ordinal outcome with all four substantive categories: 0 = not worried, 1 = a little worried, 2 = quite worried, 3 = very worried
+
+
+# Define variables used in the four-category diagnostic model
+fourcat_brant_variables <- c(
+  "climate_worry_0",
+  "depression_centered",
+  "antisocial_centered",
+  "gender_binary",
+  "age",
+  "ses",
+  "university_plans_binary",
+  "cannabis_binary",
+  "family_conflict_0",
+  "school_dissatisfaction_mean_0",
+  "bullying_mean_0",
+  "no_close_peer_relationship_binary",
+  "club_membership_binary",
+  "social_media_time_0",
+  "social_media_pressure_0",
+  "reading_time_0",
+  "urbanicity_0",
+  "family_violence_binary"
+)
+
+# Create complete-case dataset
+complete_case_4cat <- depressed_sample %>%
+  dplyr::select(all_of(fourcat_brant_variables)) %>%
+  tidyr::drop_na() %>%
+  mutate(
+    climate_worry_4cat = factor(
+      climate_worry_0,
+      levels = c(0, 1, 2, 3),
+      labels = c(
+        "Not worried",
+        "A little worried",
+        "Quite worried",
+        "Very worried"
+      ),
+      ordered = TRUE
+    )
+  )
+
+# Check distribution
+table(
+  complete_case_4cat$climate_worry_4cat,
+  useNA = "ifany"
+)
+
+# Fit four-category ordinal logistic model
+fourcat_ordinal_model_cc <- MASS::polr(
+  climate_worry_4cat ~
+    depression_centered *
+    antisocial_centered +
+    gender_binary +
+    age +
+    ses +
+    university_plans_binary +
+    cannabis_binary +
+    family_conflict_0 +
+    school_dissatisfaction_mean_0 +
+    bullying_mean_0 +
+    no_close_peer_relationship_binary +
+    club_membership_binary +
+    social_media_time_0 +
+    social_media_pressure_0 +
+    reading_time_0 +
+    urbanicity_0 +
+    family_violence_binary,
+  data = complete_case_4cat,
+  Hess = TRUE,
+  model = TRUE
+)
+
+# Run Brant test
+brant_4cat_complete_case <- brant::brant(
+  fourcat_ordinal_model_cc
+)
+
+brant_4cat_complete_case
