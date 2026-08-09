@@ -1,0 +1,850 @@
+##############################
+# SCRIPT 2 - MAIN ANALYSES ###
+##############################
+
+library(MASS)
+library(mice)
+library(brant)
+library(ordinal)
+library(broom)
+library(purrr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(scales)
+library(tibble)
+library(gt)
+library(tidyverse)
+library(sandwich)
+library(lmtest)
+
+#########################################
+### ORDINAL LOGISTIC REGRESSION MODEL ###
+#########################################
+
+# Complete imputed datasets
+ordinal_completed_data <- mice::complete(
+  Imp_ordinal,
+  action = "all"
+)
+
+# Quality checks for municipality clustering
+if (!"municipality" %in% names(ordinal_completed_data[[1]])) {
+  stop("The municipality variable is not available in the imputed ordinal datasets.")
+}
+
+if (any(purrr::map_lgl(ordinal_completed_data, ~ any(is.na(.x$municipality))))) {
+  stop("The municipality variable contains missing values in at least one imputed ordinal dataset.")
+}
+
+ordinal_cluster_summary <- purrr::map_dfr(
+  ordinal_completed_data,
+  ~ tibble::tibble(
+    n_observations = nrow(.x),
+    n_municipalities = dplyr::n_distinct(.x$municipality),
+    min_cluster_size = min(table(.x$municipality)),
+    median_cluster_size = median(as.numeric(table(.x$municipality))),
+    max_cluster_size = max(table(.x$municipality))
+  ),
+  .id = "imputation"
+)
+
+print(ordinal_cluster_summary)
+
+# Model formula
+ordinal_formula <- factor(climate_ordinal, ordered = TRUE) ~
+  depression_centered *
+  antisocial_centered +
+  gender_binary +
+  age +
+  ses +
+  university_plans_binary +
+  cannabis_binary +
+  family_conflict_0 +
+  school_dissatisfaction_mean_0 +
+  bullying_mean_0 +
+  no_close_peer_relationship_binary +
+  club_membership_binary +
+  social_media_time_0 +
+  social_media_pressure_0 +
+  reading_time_0 +
+  urbanicity_0 +
+  family_violence_binary
+
+# Fit the ordinal logistic regression model in each imputed dataset
+ordinal_model_list <- purrr::map(
+  ordinal_completed_data,
+  ~ MASS::polr(
+    formula = ordinal_formula,
+    data = .x,
+    Hess = TRUE,
+    model = TRUE
+  )
+)
+
+# Extract coefficients and municipality-clustered variances
+extract_ordinal_estimates <- function(model, data, cluster_variable = "municipality") {
+  
+  model_rows <- as.integer(rownames(stats::model.frame(model)))
+  
+  cluster_id <- data[[cluster_variable]][model_rows]
+  cluster_id <- as.factor(cluster_id)
+  
+  clustered_vcov <- sandwich::vcovCL(
+    x = model,
+    cluster = cluster_id,
+    type = "HC1"
+  )
+  
+  slope_terms <- names(stats::coef(model))
+  
+  tibble::tibble(
+    term = slope_terms,
+    estimate = unname(stats::coef(model)[slope_terms]),
+    variance = unname(diag(clustered_vcov)[slope_terms])
+  )
+}
+
+ordinal_estimates <- purrr::map2(
+  ordinal_model_list,
+  ordinal_completed_data,
+  extract_ordinal_estimates
+)
+
+# Pool coefficients and variances across imputed datasets using Rubin's rules
+pool_mi_estimates <- function(estimates_list) {
+  
+  model_terms <- estimates_list[[1]]$term
+  
+  purrr::map_dfr(
+    model_terms,
+    function(current_term) {
+      
+      term_data <- purrr::map_dfr(
+        estimates_list,
+        ~ dplyr::filter(.x, term == current_term)
+      )
+      
+      pooled_term <- mice::pool.scalar(
+        Q = term_data$estimate,
+        U = term_data$variance,
+        n = Inf
+      )
+      
+      pooled_estimate <- pooled_term$qbar
+      pooled_se <- sqrt(pooled_term$t)
+      pooled_df <- pooled_term$df
+      pooled_statistic <- pooled_estimate / pooled_se
+      
+      tibble::tibble(
+        term = current_term,
+        estimate = pooled_estimate,
+        std.error = pooled_se,
+        df = pooled_df,
+        statistic = pooled_statistic,
+        p.value = 2 * stats::pt(
+          q = abs(pooled_statistic),
+          df = pooled_df,
+          lower.tail = FALSE
+        ),
+        conf.low = pooled_estimate -
+          stats::qt(.975, df = pooled_df) * pooled_se,
+        conf.high = pooled_estimate +
+          stats::qt(.975, df = pooled_df) * pooled_se
+      )
+    }
+  )
+}
+
+standard_ordinal_results <- pool_mi_estimates(
+  ordinal_estimates
+)
+
+print(
+  standard_ordinal_results,
+  n = Inf
+)
+
+# Results table
+standard_ordinal_results_or <- standard_ordinal_results %>%
+  as_tibble() %>%
+  mutate(
+    estimate = exp(estimate),
+    conf.low = exp(conf.low),
+    conf.high = exp(conf.high),
+    
+    term_label = case_when(
+      term == "depression_centered" ~ "Depressive symptoms",
+      term == "antisocial_centered" ~ "Antisocial traits",
+      term == "depression_centered:antisocial_centered" ~
+        "Depressive symptoms x antisocial traits",
+      
+      term == "gender_binary" ~ "Gender (girls)",
+      term == "age" ~ "Age",
+      term == "ses" ~ "Socioeconomic status",
+      term == "university_plans_binary" ~ "University plans",
+      term == "cannabis_binary" ~ "Cannabis use",
+      
+      term == "family_conflict_0" ~ "Family conflict",
+      term == "family_violence_binary" ~ "Family violence",
+      term == "bullying_mean_0" ~ "Bullying",
+      
+      term == "school_dissatisfaction_mean_0" ~ "School dissatisfaction",
+      term == "no_close_peer_relationship_binary" ~ "No close peer relationship",
+      term == "club_membership_binary" ~ "Club membership",
+      
+      term == "social_media_time_0" ~ "Social media time",
+      term == "social_media_pressure_0" ~ "Social media pressure",
+      term == "reading_time_0" ~ "Reading time",
+      term == "urbanicity_0" ~ "Urbanicity",
+      
+      TRUE ~ term
+    ),
+    
+    significance = case_when(
+      p.value < .001 ~ "***",
+      p.value < .01 ~ "**",
+      p.value < .05 ~ "*",
+      TRUE ~ ""
+    ),
+    
+    OR_CI = paste0(
+      sprintf("%.2f", estimate),
+      " (",
+      sprintf("%.2f", conf.low),
+      ", ",
+      sprintf("%.2f", conf.high),
+      ")"
+    ),
+    
+    p = case_when(
+      p.value < .001 ~ paste0("< .001", significance),
+      TRUE ~ paste0(sprintf("%.3f", p.value), significance)
+    )
+  )
+
+standard_ordinal_results_gt <- standard_ordinal_results_or %>%
+  dplyr::select(
+    term_label,
+    OR_CI,
+    p
+  ) %>%
+  gt() %>%
+  tab_header(
+    title = "Ordinal logistic regression predicting climate worry"
+  ) %>%
+  cols_label(
+    term_label = "Predictor",
+    OR_CI = "OR (95% CI)",
+    p = "p"
+  ) %>%
+  tab_source_note(
+    source_note = "Note. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
+  ) %>%
+  tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+standard_ordinal_results_gt
+
+########################################
+### BINARY LOGISTIC REGRESSION MODEL ###
+########################################
+
+# Complete imputed datasets
+binary_completed_data <- mice::complete(
+  Imp_binary,
+  action = "all"
+)
+
+# Quality checks for municipality clustering
+if (!"municipality" %in% names(binary_completed_data[[1]])) {
+  stop("The municipality variable is not available in the imputed binary datasets.")
+}
+
+if (any(purrr::map_lgl(binary_completed_data, ~ any(is.na(.x$municipality))))) {
+  stop("The municipality variable contains missing values in at least one imputed binary dataset.")
+}
+
+binary_cluster_summary <- purrr::map_dfr(
+  binary_completed_data,
+  ~ tibble::tibble(
+    n_observations = nrow(.x),
+    n_municipalities = dplyr::n_distinct(.x$municipality),
+    min_cluster_size = min(table(.x$municipality)),
+    median_cluster_size = median(as.numeric(table(.x$municipality))),
+    max_cluster_size = max(table(.x$municipality))
+  ),
+  .id = "imputation"
+)
+
+print(binary_cluster_summary)
+
+# Model formula
+# Outcome coding:
+# 1 = no climate worry (climate disengagement)
+# 0 = any climate worry
+binary_formula <- I(1 - climate_binary) ~
+  depression_centered *
+  antisocial_centered +
+  gender_binary +
+  age +
+  ses +
+  university_plans_binary +
+  cannabis_binary +
+  family_conflict_0 +
+  school_dissatisfaction_mean_0 +
+  bullying_mean_0 +
+  no_close_peer_relationship_binary +
+  club_membership_binary +
+  social_media_time_0 +
+  social_media_pressure_0 +
+  reading_time_0 +
+  urbanicity_0 +
+  family_violence_binary
+
+# Fit the binary logistic regression model in each imputed dataset
+binary_model_list <- purrr::map(
+  binary_completed_data,
+  ~ glm(
+    formula = binary_formula,
+    data = .x,
+    family = binomial(link = "logit")
+  )
+)
+
+# Extract coefficients and municipality-clustered variances
+extract_binary_estimates <- function(model, data, cluster_variable = "municipality") {
+  
+  model_rows <- as.integer(rownames(stats::model.frame(model)))
+  
+  cluster_id <- data[[cluster_variable]][model_rows]
+  cluster_id <- as.factor(cluster_id)
+  
+  clustered_vcov <- sandwich::vcovCL(
+    x = model,
+    cluster = cluster_id,
+    type = "HC1"
+  )
+  
+  model_terms <- names(stats::coef(model))
+  
+  tibble::tibble(
+    term = model_terms,
+    estimate = unname(stats::coef(model)[model_terms]),
+    variance = unname(diag(clustered_vcov)[model_terms])
+  )
+}
+
+binary_estimates <- purrr::map2(
+  binary_model_list,
+  binary_completed_data,
+  extract_binary_estimates
+)
+
+# Pool coefficients and variances across imputed datasets using Rubin's rules
+binary_results <- pool_mi_estimates(
+  binary_estimates
+)
+
+print(
+  binary_results,
+  n = Inf
+)
+
+# Odds ratios
+binary_results_or <- binary_results %>%
+  as_tibble() %>%
+  mutate(
+    estimate = exp(estimate),
+    conf.low = exp(conf.low),
+    conf.high = exp(conf.high),
+    
+    term_label = case_when(
+      term == "(Intercept)" ~ "Intercept",
+      term == "depression_centered" ~ "Depressive symptoms",
+      term == "antisocial_centered" ~ "Antisocial traits",
+      term == "depression_centered:antisocial_centered" ~
+        "Depressive symptoms x antisocial traits",
+      term == "gender_binary" ~ "Gender (girls)",
+      term == "age" ~ "Age",
+      term == "ses" ~ "Socioeconomic status",
+      term == "university_plans_binary" ~ "University plans",
+      term == "cannabis_binary" ~ "Cannabis use",
+      term == "family_conflict_0" ~ "Family conflict",
+      term == "family_violence_binary" ~ "Family violence",
+      term == "bullying_mean_0" ~ "Bullying",
+      term == "school_dissatisfaction_mean_0" ~ "School dissatisfaction",
+      term == "no_close_peer_relationship_binary" ~ "No close peer relationship",
+      term == "club_membership_binary" ~ "Club membership",
+      term == "social_media_time_0" ~ "Social media time",
+      term == "social_media_pressure_0" ~ "Social media pressure",
+      term == "reading_time_0" ~ "Reading time",
+      term == "urbanicity_0" ~ "Urbanicity",
+      TRUE ~ term
+    ),
+    
+    significance = case_when(
+      p.value < .001 ~ "***",
+      p.value < .01 ~ "**",
+      p.value < .05 ~ "*",
+      TRUE ~ ""
+    ),
+    
+    OR_CI = paste0(
+      sprintf("%.2f", estimate),
+      " (",
+      sprintf("%.2f", conf.low),
+      ", ",
+      sprintf("%.2f", conf.high),
+      ")"
+    ),
+    
+    p = case_when(
+      p.value < .001 ~ paste0("< .001", significance),
+      TRUE ~ paste0(sprintf("%.3f", p.value), significance)
+    )
+  )
+
+print(
+  binary_results_or,
+  n = Inf
+)
+
+# Results table
+binary_results_gt <- binary_results_or %>%
+  dplyr::filter(
+    term != "(Intercept)"
+  ) %>%
+  dplyr::select(
+    term_label,
+    OR_CI,
+    p
+  ) %>%
+  gt() %>%
+  tab_header(
+    title = "Binary logistic regression predicting climate disengagement"
+  ) %>%
+  cols_label(
+    term_label = "Predictor",
+    OR_CI = "OR (95% CI)",
+    p = "p"
+  ) %>%
+  tab_source_note(
+    source_note = "Note. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. The outcome is climate disengagement, coded 1 = no climate worry and 0 = any climate worry. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
+  ) %>%
+  tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+binary_results_gt
+
+#######################
+### GENDER ANALYSES ###
+#######################
+
+label_terms <- function(data) {
+  data %>%
+    mutate(
+      term_label = case_when(
+        term == "(Intercept)" ~ "Intercept",
+        term == "depression_centered" ~ "Depressive symptoms",
+        term == "antisocial_centered" ~ "Antisocial traits",
+        term == "depression_centered:antisocial_centered" ~
+          "Depressive symptoms x antisocial traits",
+        term == "gender_binary" ~ "Gender (girls)",
+        term %in% c(
+          "gender_binary:depression_centered",
+          "depression_centered:gender_binary"
+        ) ~ "Gender x depressive symptoms",
+        term %in% c(
+          "gender_binary:antisocial_centered",
+          "antisocial_centered:gender_binary"
+        ) ~ "Gender x antisocial traits",
+        term == "age" ~ "Age",
+        term == "ses" ~ "Socioeconomic status",
+        term == "university_plans_binary" ~ "University plans",
+        term == "cannabis_binary" ~ "Cannabis use",
+        term == "family_conflict_0" ~ "Family conflict",
+        term == "family_violence_binary" ~ "Family violence",
+        term == "bullying_mean_0" ~ "Bullying",
+        term == "school_dissatisfaction_mean_0" ~ "School dissatisfaction",
+        term == "no_close_peer_relationship_binary" ~ "No close peer relationship",
+        term == "club_membership_binary" ~ "Club membership",
+        term == "social_media_time_0" ~ "Social media time",
+        term == "social_media_pressure_0" ~ "Social media pressure",
+        term == "reading_time_0" ~ "Reading time",
+        term == "urbanicity_0" ~ "Urbanicity",
+        TRUE ~ term
+      )
+    )
+}
+
+format_or_results <- function(data) {
+  data %>%
+    mutate(
+      odds_ratio = exp(estimate),
+      or_lower_ci = exp(conf.low),
+      or_upper_ci = exp(conf.high),
+      OR_CI = paste0(
+        sprintf("%.2f", odds_ratio),
+        " (",
+        sprintf("%.2f", or_lower_ci),
+        ", ",
+        sprintf("%.2f", or_upper_ci),
+        ")"
+      ),
+      significance = case_when(
+        p.value < .001 ~ "***",
+        p.value < .01 ~ "**",
+        p.value < .05 ~ "*",
+        TRUE ~ ""
+      ),
+      p = case_when(
+        p.value < .001 ~ paste0("< .001", significance),
+        TRUE ~ paste0(sprintf("%.3f", p.value), significance)
+      )
+    )
+}
+
+###################################################
+### ORDINAL MODEL WITH GENDER INTERACTIONS ########
+###################################################
+
+ordinal_gender_interaction_formula <- factor(climate_ordinal, ordered = TRUE) ~
+  depression_centered *
+  antisocial_centered +
+  gender_binary *
+  depression_centered +
+  gender_binary *
+  antisocial_centered +
+  age +
+  ses +
+  university_plans_binary +
+  cannabis_binary +
+  family_conflict_0 +
+  school_dissatisfaction_mean_0 +
+  bullying_mean_0 +
+  no_close_peer_relationship_binary +
+  club_membership_binary +
+  social_media_time_0 +
+  social_media_pressure_0 +
+  reading_time_0 +
+  urbanicity_0 +
+  family_violence_binary
+
+ordinal_gender_interaction_models <- purrr::map(
+  ordinal_completed_data,
+  ~ MASS::polr(
+    formula = ordinal_gender_interaction_formula,
+    data = .x,
+    Hess = TRUE,
+    model = TRUE
+  )
+)
+
+ordinal_gender_interaction_results <- purrr::map2(
+  ordinal_gender_interaction_models,
+  ordinal_completed_data,
+  extract_ordinal_estimates
+) %>%
+  pool_mi_estimates() %>%
+  label_terms() %>%
+  format_or_results()
+
+ordinal_gender_interaction_gt <- ordinal_gender_interaction_results %>%
+  filter(
+    term %in% c(
+      "depression_centered:gender_binary",
+      "gender_binary:depression_centered",
+      "antisocial_centered:gender_binary",
+      "gender_binary:antisocial_centered"
+    )
+  ) %>%
+  dplyr::select(term_label, OR_CI, p) %>%
+  gt() %>%
+  tab_header(
+    title = "Gender interaction terms in the ordinal model"
+  ) %>%
+  cols_label(
+    term_label = "Predictor",
+    OR_CI = "OR (95% CI)",
+    p = "p"
+  ) %>%
+  tab_source_note(
+    source_note = "Note. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
+  ) %>%
+  tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+ordinal_gender_interaction_gt
+
+#############################################
+### BINARY MODEL WITH GENDER INTERACTIONS ###
+#############################################
+
+binary_gender_interaction_formula <- I(1 - climate_binary) ~
+  depression_centered *
+  antisocial_centered +
+  gender_binary *
+  depression_centered +
+  gender_binary *
+  antisocial_centered +
+  age +
+  ses +
+  university_plans_binary +
+  cannabis_binary +
+  family_conflict_0 +
+  school_dissatisfaction_mean_0 +
+  bullying_mean_0 +
+  no_close_peer_relationship_binary +
+  club_membership_binary +
+  social_media_time_0 +
+  social_media_pressure_0 +
+  reading_time_0 +
+  urbanicity_0 +
+  family_violence_binary
+
+binary_gender_interaction_models <- purrr::map(
+  binary_completed_data,
+  ~ glm(
+    formula = binary_gender_interaction_formula,
+    data = .x,
+    family = binomial(link = "logit")
+  )
+)
+
+binary_gender_interaction_results <- purrr::map2(
+  binary_gender_interaction_models,
+  binary_completed_data,
+  extract_binary_estimates
+) %>%
+  pool_mi_estimates() %>%
+  label_terms() %>%
+  format_or_results()
+
+binary_gender_interaction_gt <- binary_gender_interaction_results %>%
+  filter(
+    term %in% c(
+      "depression_centered:gender_binary",
+      "gender_binary:depression_centered",
+      "antisocial_centered:gender_binary",
+      "gender_binary:antisocial_centered"
+    )
+  ) %>%
+  dplyr::select(term_label, OR_CI, p) %>%
+  gt() %>%
+  tab_header(
+    title = "Gender interaction terms in the binary climate disengagement model"
+  ) %>%
+  cols_label(
+    term_label = "Predictor",
+    OR_CI = "OR (95% CI)",
+    p = "p"
+  ) %>%
+  tab_source_note(
+    source_note = "Note. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. The outcome is climate disengagement, coded 1 = no climate worry and 0 = any climate worry. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
+  ) %>%
+  tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+binary_gender_interaction_gt
+
+########################################
+### GENDER-STRATIFIED ORDINAL MODELS ###
+########################################
+
+fit_ordinal_stratified <- function(gender_value, gender_label) {
+  
+  stratified_data <- purrr::map(
+    ordinal_completed_data,
+    ~ dplyr::filter(.x, gender_binary == gender_value)
+  )
+  
+  stratified_models <- purrr::map(
+    stratified_data,
+    ~ MASS::polr(
+      factor(climate_ordinal, ordered = TRUE) ~
+        depression_centered *
+        antisocial_centered +
+        age +
+        ses +
+        university_plans_binary +
+        cannabis_binary +
+        family_conflict_0 +
+        school_dissatisfaction_mean_0 +
+        bullying_mean_0 +
+        no_close_peer_relationship_binary +
+        club_membership_binary +
+        social_media_time_0 +
+        social_media_pressure_0 +
+        reading_time_0 +
+        urbanicity_0 +
+        family_violence_binary,
+      data = .x,
+      Hess = TRUE,
+      model = TRUE
+    )
+  )
+  
+  purrr::map2(
+    stratified_models,
+    stratified_data,
+    extract_ordinal_estimates
+  ) %>%
+    pool_mi_estimates() %>%
+    mutate(gender_group = gender_label)
+}
+
+ordinal_stratified_results <- bind_rows(
+  fit_ordinal_stratified(0, "Boys"),
+  fit_ordinal_stratified(1, "Girls")
+) %>%
+  label_terms() %>%
+  format_or_results()
+
+ordinal_stratified_gt <- ordinal_stratified_results %>%
+  filter(!stringr::str_detect(term, "\\|")) %>%
+  dplyr::select(gender_group, term_label, OR_CI, p) %>%
+  pivot_wider(
+    names_from = gender_group,
+    values_from = c(OR_CI, p),
+    names_glue = "{gender_group}_{.value}"
+  ) %>%
+  dplyr::select(term_label, Boys_OR_CI, Boys_p, Girls_OR_CI, Girls_p) %>%
+  gt() %>%
+  tab_header(
+    title = "Gender-stratified ordinal models"
+  ) %>%
+  cols_label(
+    term_label = "Predictor",
+    Boys_OR_CI = "OR (95% CI)",
+    Boys_p = "p",
+    Girls_OR_CI = "OR (95% CI)",
+    Girls_p = "p"
+  ) %>%
+  tab_spanner(
+    label = "Boys",
+    columns = c(Boys_OR_CI, Boys_p)
+  ) %>%
+  tab_spanner(
+    label = "Girls",
+    columns = c(Girls_OR_CI, Girls_p)
+  ) %>%
+  tab_source_note(
+    source_note = "Note. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
+  ) %>%
+  tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+ordinal_stratified_gt
+
+#######################################
+### GENDER-STRATIFIED BINARY MODELS ###
+#######################################
+
+fit_binary_stratified <- function(gender_value, gender_label) {
+  
+  stratified_data <- purrr::map(
+    binary_completed_data,
+    ~ dplyr::filter(.x, gender_binary == gender_value)
+  )
+  
+  stratified_models <- purrr::map(
+    stratified_data,
+    ~ glm(
+      I(1 - climate_binary) ~
+        depression_centered *
+        antisocial_centered +
+        age +
+        ses +
+        university_plans_binary +
+        cannabis_binary +
+        family_conflict_0 +
+        school_dissatisfaction_mean_0 +
+        bullying_mean_0 +
+        no_close_peer_relationship_binary +
+        club_membership_binary +
+        social_media_time_0 +
+        social_media_pressure_0 +
+        reading_time_0 +
+        urbanicity_0 +
+        family_violence_binary,
+      data = .x,
+      family = binomial(link = "logit")
+    )
+  )
+  
+  purrr::map2(
+    stratified_models,
+    stratified_data,
+    extract_binary_estimates
+  ) %>%
+    pool_mi_estimates() %>%
+    mutate(gender_group = gender_label)
+}
+
+binary_stratified_results <- bind_rows(
+  fit_binary_stratified(0, "Boys"),
+  fit_binary_stratified(1, "Girls")
+) %>%
+  label_terms() %>%
+  format_or_results()
+
+binary_stratified_gt <- binary_stratified_results %>%
+  filter(term != "(Intercept)") %>%
+  dplyr::select(gender_group, term_label, OR_CI, p) %>%
+  pivot_wider(
+    names_from = gender_group,
+    values_from = c(OR_CI, p),
+    names_glue = "{gender_group}_{.value}"
+  ) %>%
+  dplyr::select(term_label, Boys_OR_CI, Boys_p, Girls_OR_CI, Girls_p) %>%
+  gt() %>%
+  tab_header(
+    title = "Gender-stratified binary models predicting climate disengagement"
+  ) %>%
+  cols_label(
+    term_label = "Predictor",
+    Boys_OR_CI = "OR (95% CI)",
+    Boys_p = "p",
+    Girls_OR_CI = "OR (95% CI)",
+    Girls_p = "p"
+  ) %>%
+  tab_spanner(
+    label = "Boys",
+    columns = c(Boys_OR_CI, Boys_p)
+  ) %>%
+  tab_spanner(
+    label = "Girls",
+    columns = c(Girls_OR_CI, Girls_p)
+  ) %>%
+  tab_source_note(
+    source_note = "Note. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. The outcome is climate disengagement, coded 1 = no climate worry and 0 = any climate worry. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
+  ) %>%
+  tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+binary_stratified_gt
