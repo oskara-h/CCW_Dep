@@ -1,0 +1,373 @@
+########################################################
+### CCW SCRIPT 6: COMPLETE-CASE SENSITIVITY ANALYSIS ###
+########################################################
+
+library(MASS)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(gt)
+library(sandwich)
+
+#######################
+### MODEL VARIABLES ###
+#######################
+
+common_predictors <- c(
+  "depression_centered",
+  "antisocial_centered",
+  "gender_binary",
+  "age",
+  "ses",
+  "university_plans_binary",
+  "cannabis_binary",
+  "family_conflict_0",
+  "school_dissatisfaction_mean_0",
+  "bullying_mean_0",
+  "no_close_peer_relationship_binary",
+  "club_membership_binary",
+  "social_media_time_0",
+  "social_media_pressure_0",
+  "reading_time_0",
+  "urbanicity_0",
+  "family_violence_binary",
+  "municipality"
+)
+
+ordinal_model_variables <- c(
+  "climate_ordinal",
+  common_predictors
+)
+
+binary_model_variables <- c(
+  "climate_binary",
+  common_predictors
+)
+
+###################
+### CC DATASETS ###
+###################
+complete_case_ordinal <- depressed_sample %>%
+  dplyr::select(all_of(ordinal_model_variables)) %>%
+  filter(!is.na(climate_ordinal)) %>%
+  tidyr::drop_na() %>%
+  mutate(
+    climate_ordinal = factor(
+      climate_ordinal,
+      levels = c(0, 1, 2),
+      labels = c("A little worried", "Quite worried", "Very worried"),
+      ordered = TRUE
+    ),
+    municipality = factor(municipality)
+  )
+
+complete_case_binary <- depressed_sample %>%
+  dplyr::select(all_of(binary_model_variables)) %>%
+  filter(!is.na(climate_binary)) %>%
+  tidyr::drop_na() %>%
+  mutate(
+    no_climate_worry = 1 - climate_binary,
+    municipality = factor(municipality)
+  )
+
+######################
+### MODEL FORMULAS ###
+######################
+
+ordinal_formula_cc <- climate_ordinal ~
+  depression_centered *
+  antisocial_centered +
+  gender_binary +
+  age +
+  ses +
+  university_plans_binary +
+  cannabis_binary +
+  family_conflict_0 +
+  school_dissatisfaction_mean_0 +
+  bullying_mean_0 +
+  no_close_peer_relationship_binary +
+  club_membership_binary +
+  social_media_time_0 +
+  social_media_pressure_0 +
+  reading_time_0 +
+  urbanicity_0 +
+  family_violence_binary
+
+binary_formula_cc <- no_climate_worry ~
+  depression_centered *
+  antisocial_centered +
+  gender_binary +
+  age +
+  ses +
+  university_plans_binary +
+  cannabis_binary +
+  family_conflict_0 +
+  school_dissatisfaction_mean_0 +
+  bullying_mean_0 +
+  no_close_peer_relationship_binary +
+  club_membership_binary +
+  social_media_time_0 +
+  social_media_pressure_0 +
+  reading_time_0 +
+  urbanicity_0 +
+  family_violence_binary
+
+#####################
+### FIT CC MODELS ###
+#####################
+
+ordinal_model_cc <- MASS::polr(
+  formula = ordinal_formula_cc,
+  data = complete_case_ordinal,
+  Hess = TRUE,
+  model = TRUE
+)
+
+binary_model_cc <- glm(
+  formula = binary_formula_cc,
+  data = complete_case_binary,
+  family = binomial(link = "logit")
+)
+
+##################
+### CC SUMMARY ###
+##################
+
+complete_case_n_summary <- tibble::tibble(
+  model = c(
+    "Ordinal model",
+    "Binary model"
+  ),
+  n_dataset = c(
+    nrow(complete_case_ordinal),
+    nrow(complete_case_binary)
+  ),
+  n_model = c(
+    nobs(ordinal_model_cc),
+    nobs(binary_model_cc)
+  ),
+  n_municipalities = c(
+    dplyr::n_distinct(complete_case_ordinal$municipality),
+    dplyr::n_distinct(complete_case_binary$municipality)
+  ),
+  min_cluster_size = c(
+    min(table(complete_case_ordinal$municipality)),
+    min(table(complete_case_binary$municipality))
+  ),
+  median_cluster_size = c(
+    median(as.numeric(table(complete_case_ordinal$municipality))),
+    median(as.numeric(table(complete_case_binary$municipality)))
+  ),
+  max_cluster_size = c(
+    max(table(complete_case_ordinal$municipality)),
+    max(table(complete_case_binary$municipality))
+  )
+)
+
+complete_case_n_summary
+
+######################################
+### EXTRACT CLUSTER-ROBUST RESULTS ###
+######################################
+
+extract_polr_clustered_results <- function(model, data, cluster_variable = "municipality") {
+  
+  model_rows <- as.integer(rownames(stats::model.frame(model)))
+  cluster_id <- as.factor(data[[cluster_variable]][model_rows])
+  
+  clustered_vcov <- sandwich::vcovCL(
+    x = model,
+    cluster = cluster_id,
+    type = "HC1"
+  )
+  
+  slope_terms <- names(stats::coef(model))
+  
+  estimates <- stats::coef(model)[slope_terms]
+  variances <- diag(clustered_vcov)[slope_terms]
+  std_errors <- sqrt(variances)
+  statistics <- estimates / std_errors
+  p_values <- 2 * stats::pnorm(abs(statistics), lower.tail = FALSE)
+  
+  tibble::tibble(
+    term = slope_terms,
+    estimate = unname(estimates),
+    std.error = unname(std_errors),
+    statistic = unname(statistics),
+    p.value = unname(p_values),
+    conf.low = estimate - 1.96 * std.error,
+    conf.high = estimate + 1.96 * std.error,
+    odds_ratio = exp(estimate),
+    or_lower_ci = exp(conf.low),
+    or_upper_ci = exp(conf.high)
+  )
+}
+
+extract_glm_clustered_results <- function(model, data, cluster_variable = "municipality") {
+  
+  model_rows <- as.integer(rownames(stats::model.frame(model)))
+  cluster_id <- as.factor(data[[cluster_variable]][model_rows])
+  
+  clustered_vcov <- sandwich::vcovCL(
+    x = model,
+    cluster = cluster_id,
+    type = "HC1"
+  )
+  
+  model_terms <- names(stats::coef(model))
+  
+  estimates <- stats::coef(model)[model_terms]
+  variances <- diag(clustered_vcov)[model_terms]
+  std_errors <- sqrt(variances)
+  statistics <- estimates / std_errors
+  p_values <- 2 * stats::pnorm(abs(statistics), lower.tail = FALSE)
+  
+  tibble::tibble(
+    term = model_terms,
+    estimate = unname(estimates),
+    std.error = unname(std_errors),
+    statistic = unname(statistics),
+    p.value = unname(p_values),
+    conf.low = estimate - 1.96 * std.error,
+    conf.high = estimate + 1.96 * std.error,
+    odds_ratio = exp(estimate),
+    or_lower_ci = exp(conf.low),
+    or_upper_ci = exp(conf.high)
+  ) %>%
+    filter(term != "(Intercept)")
+}
+
+ordinal_results_cc_or <- extract_polr_clustered_results(
+  model = ordinal_model_cc,
+  data = complete_case_ordinal
+)
+
+binary_results_cc_or <- extract_glm_clustered_results(
+  model = binary_model_cc,
+  data = complete_case_binary
+)
+
+################################
+### LABEL AND FORMAT RESULTS ###
+################################
+
+label_terms <- function(data) {
+  data %>%
+    mutate(
+      term_label = case_when(
+        term == "depression_centered" ~ "Depressive symptoms",
+        term == "antisocial_centered" ~ "Antisocial traits",
+        term == "depression_centered:antisocial_centered" ~
+          "Depressive symptoms x antisocial traits",
+        term == "gender_binary" ~ "Gender (girls)",
+        term == "age" ~ "Age",
+        term == "ses" ~ "Socioeconomic status",
+        term == "university_plans_binary" ~ "University plans",
+        term == "cannabis_binary" ~ "Cannabis use",
+        term == "family_conflict_0" ~ "Family conflict",
+        term == "family_violence_binary" ~ "Family violence",
+        term == "bullying_mean_0" ~ "Bullying",
+        term == "school_dissatisfaction_mean_0" ~ "School dissatisfaction",
+        term == "no_close_peer_relationship_binary" ~ "No close peer relationship",
+        term == "club_membership_binary" ~ "Club membership",
+        term == "social_media_time_0" ~ "Social media time",
+        term == "social_media_pressure_0" ~ "Social media pressure",
+        term == "reading_time_0" ~ "Reading time",
+        term == "urbanicity_0" ~ "Urbanicity",
+        TRUE ~ term
+      )
+    )
+}
+
+format_or_table <- function(data) {
+  data %>%
+    label_terms() %>%
+    mutate(
+      OR_CI = paste0(
+        sprintf("%.2f", odds_ratio),
+        " (",
+        sprintf("%.2f", or_lower_ci),
+        ", ",
+        sprintf("%.2f", or_upper_ci),
+        ")"
+      ),
+      significance = case_when(
+        p.value < .001 ~ "***",
+        p.value < .01 ~ "**",
+        p.value < .05 ~ "*",
+        TRUE ~ ""
+      ),
+      p = case_when(
+        p.value < .001 ~ paste0("< .001", significance),
+        TRUE ~ paste0(sprintf("%.3f", p.value), significance)
+      )
+    )
+}
+
+ordinal_results_cc_or <- ordinal_results_cc_or %>%
+  format_or_table()
+
+binary_results_cc_or <- binary_results_cc_or %>%
+  format_or_table()
+
+#################
+### GT TABLES ###
+#################
+
+ordinal_results_cc_gt <- ordinal_results_cc_or %>%
+  dplyr::select(term_label, OR_CI, p) %>%
+  gt() %>%
+  tab_header(
+    title = "Complete-case ordinal logistic regression predicting climate worry severity"
+  ) %>%
+  cols_label(
+    term_label = "Predictor",
+    OR_CI = "OR (95% CI)",
+    p = "p"
+  ) %>%
+  tab_source_note(
+    source_note = paste0(
+      "Note. OR = odds ratio; CI = confidence interval. ",
+      "* p < .05, ** p < .01, *** p < .001. ",
+      "The outcome is climate worry severity among adolescents reporting any climate worry. ",
+      "Standard errors are clustered by municipality. Complete-case analysis."
+    )
+  ) %>%
+  tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+binary_results_cc_gt <- binary_results_cc_or %>%
+  dplyr::select(term_label, OR_CI, p) %>%
+  gt() %>%
+  tab_header(
+    title = "Complete-case binary logistic regression predicting no climate worry"
+  ) %>%
+  cols_label(
+    term_label = "Predictor",
+    OR_CI = "OR (95% CI)",
+    p = "p"
+  ) %>%
+  tab_source_note(
+    source_note = paste0(
+      "Note. OR = odds ratio; CI = confidence interval. ",
+      "* p < .05, ** p < .01, *** p < .001. ",
+      "The outcome is no climate worry, coded 1 = no climate worry and 0 = any climate worry. ",
+      "Standard errors are clustered by municipality. Complete-case analysis."
+    )
+  ) %>%
+  tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+ordinal_results_cc_gt
+binary_results_cc_gt
+
+ordinal_results_cc_or
+binary_results_cc_or
