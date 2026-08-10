@@ -25,9 +25,7 @@ library(sandwich)
 ### READ AND PREPARE RAW DATA ###
 #################################
 
-ungdata_fullsamp <- read_sav(
-  "C:/Users/oskar/OneDrive/1. Climate Change Worry/R_CW/Analyse/Nytt_Datasett/2026-12+Angell-Hansen+(UiO).sav"
-)
+ungdata_fullsamp <- read_sav("DATASET")
 
 ungdata_fullsamp <- ungdata_fullsamp %>%
   rename(year = 1)
