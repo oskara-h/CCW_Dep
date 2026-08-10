@@ -1,8 +1,6 @@
-
-###################################################
-### SENSITIVITY HIGH VERSUS LOW P-FACTOR SAMPLE ###
-### [HIGH P-FACTOR SUBGROUP: Q4 ON BOTH SCALES] ###
-###################################################
+###################################################################
+### CCW SCRIPT 5: HIGH VERSUS LOW P-FACTOR SAMPLE [SENSITIVITY] ###
+###################################################################
 
 # LOAD PACKAGES
 library(rstatix)
