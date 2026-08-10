@@ -32,7 +32,9 @@ antisocial_q75 <- quantile(
 )
 
 # Create high and low p-factor groups.
+
 # High p-factor = above the 75th percentile on both depressive symptoms and antisocial traits.
+
 # Low p-factor = all other participants in the depressed sample.
 
 pfactor_comparison_data <- pfactor_comparison_data %>%
@@ -66,7 +68,12 @@ pfactor_group_summary
 ### CLIMATE WORRY DISTRIBUTION BY P-FACTOR GROUP ###
 ####################################################
 
-climate_worry_distribution <- pfactor_comparison_data %>%
+# Restrict the climate-worry comparison to participants with a substantive response.
+
+pfactor_climate_data <- pfactor_comparison_data %>%
+  filter(climate_worry %in% c(1, 2, 3, 4))
+
+climate_worry_distribution <- pfactor_climate_data %>%
   mutate(
     climate_worry_label = case_when(
       climate_worry == 1 ~ "Not worried",
@@ -95,7 +102,8 @@ climate_worry_distribution <- pfactor_comparison_data %>%
 climate_worry_distribution
 
 # CHI-SQUARED TEST
-pfactor_chisq <- pfactor_comparison_data %>%
+
+pfactor_chisq <- pfactor_climate_data %>%
   select(
     pfactor_group,
     climate_worry
@@ -104,8 +112,8 @@ pfactor_chisq <- pfactor_comparison_data %>%
 
 chisq.test(pfactor_chisq)
 
+# CRAMER'S V
 
-# CRAMER'S V 
 pfactor_cramers_v <- cramer_v(
   pfactor_chisq
 )
@@ -117,6 +125,7 @@ pfactor_cramers_v
 #################################################
 
 # Statistical tests
+
 chi_result <- chisq.test(pfactor_chisq)
 
 cramers_v_result <- rstatix::cramer_v(
@@ -124,7 +133,8 @@ cramers_v_result <- rstatix::cramer_v(
 )
 
 # Group Ns
-group_n <- pfactor_comparison_data %>%
+
+group_n <- pfactor_climate_data %>%
   count(pfactor_group)
 
 high_n <- group_n %>%
@@ -136,8 +146,9 @@ low_n <- group_n %>%
   pull(n)
 
 # Formatting
+
 chi_text <- paste0(
-  "\u03C7\u00B2(",
+  "χ²(",
   chi_result$parameter,
   ") = ",
   round(chi_result$statistic, 2)
@@ -155,6 +166,7 @@ v_text <- paste0(
 )
 
 # Main table
+
 climate_worry_table <- climate_worry_distribution %>%
   mutate(
     climate_worry_label = factor(
