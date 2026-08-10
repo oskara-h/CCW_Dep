@@ -1,0 +1,1420 @@
+
+#####################################################################
+### SCRIPT 7: DEPRESSED VERSUS NON-DEPRESSED SAMPLE [SENSITIVITY] ###
+#####################################################################
+
+#LOAD PACKAGES
+library(haven)
+library(tidyverse)
+library(tidyr)
+library(janitor)
+library(psych)
+library(mice)
+library(naniar)
+library(car)
+library(lme4)
+library(ordinal)
+library(tibble)
+library(dplyr)
+library(MASS)
+library(purrr)
+library(gt)
+library(sandwich)
+
+#################################
+### READ AND PREPARE RAW DATA ###
+#################################
+
+ungdata_fullsamp <- read_sav(
+  "C:/Users/oskar/OneDrive/1. Climate Change Worry/R_CW/Analyse/Nytt_Datasett/2026-12+Angell-Hansen+(UiO).sav"
+)
+
+ungdata_fullsamp <- ungdata_fullsamp %>%
+  rename(year = 1)
+
+ungdata_2022_only_fullsamp <- ungdata_fullsamp %>%
+  filter(year == 2022)
+
+ungdata_2022_only_fullsamp %>%
+  count(year)
+
+ungdata_2022_only_fullsamp <- ungdata_2022_only_fullsamp %>%
+  clean_names()
+
+#################################################
+### RENAME AND SELECT VARIABLES #################
+#################################################
+
+ungdata_2022_analytic_fullsamp <- ungdata_2022_only_fullsamp %>%
+  rename(
+    climate_worry = klima1,
+    gender = kjonn,
+    grade = klasse,
+    ses = sos,
+    university_plans = framtid5,
+    
+    depression1 = depr1,
+    depression2 = depr2,
+    depression3 = depr3,
+    depression4 = depr4,
+    depression5 = depr5,
+    depression6 = depr6,
+    
+    antisocial_traits1 = atfpro1,
+    antisocial_traits12 = atfpro12,
+    antisocial_traits15 = atfpro15,
+    antisocial_traits16 = atfpro16,
+    antisocial_traits18 = atfpro18,
+    antisocial_traits25 = atfpro25,
+    
+    cannabis_use = atfpro10,
+    family_conflict = foreldre8,
+    
+    school1 = skole1,
+    school2 = skole2,
+    school3 = skole3,
+    school6 = skole6,
+    
+    peer_relationship = venner2,
+    club_membership = orgmedl1,
+    
+    social_media_time = media12,
+    social_media_pressure = press4,
+    reading_time = media10,
+    
+    bullying_by_peers = mobb2,
+    digital_bullying_by_peers = mobb3,
+    
+    municipality = kommune,
+    county = fylke,
+    centrality = sentralitet,
+    
+    violence8 = vold8,
+    violence9 = vold9
+  ) %>%
+  dplyr::select(
+    climate_worry,
+    gender,
+    grade,
+    ses,
+    university_plans,
+    depression1:depression6,
+    antisocial_traits1,
+    antisocial_traits12,
+    antisocial_traits15,
+    antisocial_traits16,
+    antisocial_traits18,
+    antisocial_traits25,
+    cannabis_use,
+    family_conflict,
+    school1,
+    school2,
+    school3,
+    school6,
+    peer_relationship,
+    club_membership,
+    social_media_time,
+    social_media_pressure,
+    reading_time,
+    bullying_by_peers,
+    digital_bullying_by_peers,
+    municipality,
+    county,
+    centrality,
+    violence8,
+    violence9
+  )
+
+dim(ungdata_2022_analytic_fullsamp)
+glimpse(ungdata_2022_analytic_fullsamp)
+
+ungdata_2022_analytic_fullsamp %>%
+  summarise(
+    across(
+      everything(),
+      ~ sum(is.na(.))
+    )
+  ) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "variable",
+    values_to = "n_missing"
+  ) %>%
+  arrange(desc(n_missing))
+
+#####################################################
+### CREATE DEPRESSION SCALE USING ORIGINAL CODING ###
+#####################################################
+
+ungdata_2022_analytic_fullsamp <- ungdata_2022_analytic_fullsamp %>%
+  mutate(
+    depression_n = rowSums(
+      !is.na(dplyr::select(., depression1:depression6))
+    ),
+    
+    depression_mean_original = ifelse(
+      depression_n >= 5,
+      rowMeans(
+        dplyr::select(., depression1:depression6),
+        na.rm = TRUE
+      ),
+      NA_real_
+    )
+  )
+
+summary(ungdata_2022_analytic_fullsamp$depression_mean_original)
+
+table(
+  ungdata_2022_analytic_fullsamp$depression_n,
+  useNA = "ifany"
+)
+
+full_sample_fullsamp <- ungdata_2022_analytic_fullsamp
+
+##########################################
+### RESCALE VARIABLES TO START AT ZERO ###
+##########################################
+
+full_sample_fullsamp <- full_sample_fullsamp %>%
+  mutate(
+    across(
+      c(
+        depression1:depression6,
+        antisocial_traits1,
+        antisocial_traits12,
+        antisocial_traits15,
+        antisocial_traits16,
+        antisocial_traits18,
+        antisocial_traits25,
+        school1,
+        school2,
+        school3,
+        school6,
+        peer_relationship,
+        club_membership,
+        social_media_time,
+        social_media_pressure,
+        reading_time,
+        bullying_by_peers,
+        digital_bullying_by_peers,
+        centrality
+      ),
+      ~ .x - 1,
+      .names = "{.col}_0"
+    )
+  )
+
+#######################################
+### CREATE 0-BASED DEPRESSION SCALE ###
+#######################################
+
+full_sample_fullsamp <- full_sample_fullsamp %>%
+  mutate(
+    depression_mean_0 = ifelse(
+      depression_n >= 5,
+      rowMeans(
+        dplyr::select(., depression1_0:depression6_0),
+        na.rm = TRUE
+      ),
+      NA_real_
+    )
+  )
+
+summary(full_sample_fullsamp$depression_mean_0)
+
+###############################
+### CLIMATE WORRY VARIABLES ###
+###############################
+
+full_sample_fullsamp <- full_sample_fullsamp %>%
+  mutate(
+    climate_worry_original = climate_worry,
+    
+    climate_worry = ifelse(
+      climate_worry == 5,
+      NA_real_,
+      climate_worry
+    ),
+    
+    climate_worry_0 = case_when(
+      climate_worry == 1 ~ 0,
+      climate_worry == 2 ~ 1,
+      climate_worry == 3 ~ 2,
+      climate_worry == 4 ~ 3,
+      TRUE ~ NA_real_
+    ),
+    
+    climate_binary = case_when(
+      climate_worry == 1 ~ 0,
+      climate_worry %in% c(2, 3, 4) ~ 1,
+      TRUE ~ NA_real_
+    ),
+    
+    climate_ordinal = case_when(
+      climate_worry == 2 ~ 0,
+      climate_worry == 3 ~ 1,
+      climate_worry == 4 ~ 2,
+      TRUE ~ NA_real_
+    )
+  )
+
+table(full_sample_fullsamp$climate_worry, useNA = "ifany")
+table(full_sample_fullsamp$climate_worry_0, useNA = "ifany")
+table(full_sample_fullsamp$climate_binary, useNA = "ifany")
+table(full_sample_fullsamp$climate_ordinal, useNA = "ifany")
+
+######################################
+### CREATE ANTISOCIAL TRAITS SCALE ###
+######################################
+
+full_sample_fullsamp <- full_sample_fullsamp %>%
+  mutate(
+    antisocial_n = rowSums(
+      !is.na(
+        dplyr::select(
+          .,
+          antisocial_traits1_0,
+          antisocial_traits12_0,
+          antisocial_traits15_0,
+          antisocial_traits16_0,
+          antisocial_traits18_0,
+          antisocial_traits25_0
+        )
+      )
+    ),
+    
+    antisocial_mean_0 = ifelse(
+      antisocial_n >= 4,
+      rowMeans(
+        dplyr::select(
+          .,
+          antisocial_traits1_0,
+          antisocial_traits12_0,
+          antisocial_traits15_0,
+          antisocial_traits16_0,
+          antisocial_traits18_0,
+          antisocial_traits25_0
+        ),
+        na.rm = TRUE
+      ),
+      NA_real_
+    )
+  )
+
+summary(full_sample_fullsamp$antisocial_mean_0)
+
+table(
+  full_sample_fullsamp$antisocial_n,
+  useNA = "ifany"
+)
+
+#############################################
+### MEAN-CENTER KEY CONTINUOUS PREDICTORS ###
+#############################################
+
+full_sample_fullsamp <- full_sample_fullsamp %>%
+  mutate(
+    depression_centered =
+      depression_mean_0 -
+      mean(depression_mean_0, na.rm = TRUE),
+    
+    antisocial_centered =
+      antisocial_mean_0 -
+      mean(antisocial_mean_0, na.rm = TRUE)
+  )
+
+summary(full_sample_fullsamp$depression_centered)
+summary(full_sample_fullsamp$antisocial_centered)
+
+mean(full_sample_fullsamp$depression_centered, na.rm = TRUE)
+mean(full_sample_fullsamp$antisocial_centered, na.rm = TRUE)
+
+###########################################
+### CREATE SCHOOL DISSATISFACTION SCALE ###
+###########################################
+
+full_sample_fullsamp <- full_sample_fullsamp %>%
+  mutate(
+    school1_dissatisfaction_0 = school1_0,
+    school2_dissatisfaction_0 = school2_0,
+    school3_dissatisfaction_0 = school3_0,
+    school6_dissatisfaction_0 = 3 - school6_0
+  )
+
+full_sample_fullsamp <- full_sample_fullsamp %>%
+  mutate(
+    school_dissatisfaction_n = rowSums(
+      !is.na(
+        dplyr::select(
+          .,
+          school1_dissatisfaction_0,
+          school2_dissatisfaction_0,
+          school3_dissatisfaction_0,
+          school6_dissatisfaction_0
+        )
+      )
+    ),
+    
+    school_dissatisfaction_mean_0 = ifelse(
+      school_dissatisfaction_n >= 3,
+      rowMeans(
+        dplyr::select(
+          .,
+          school1_dissatisfaction_0,
+          school2_dissatisfaction_0,
+          school3_dissatisfaction_0,
+          school6_dissatisfaction_0
+        ),
+        na.rm = TRUE
+      ),
+      NA_real_
+    )
+  )
+
+summary(full_sample_fullsamp$school_dissatisfaction_mean_0)
+
+table(
+  full_sample_fullsamp$school_dissatisfaction_n,
+  useNA = "ifany"
+)
+
+#############################
+### CREATE BULLYING SCALE ###
+#############################
+
+full_sample_fullsamp <- full_sample_fullsamp %>%
+  mutate(
+    bullying_by_peers_rev_0 = 5 - bullying_by_peers_0,
+    digital_bullying_by_peers_rev_0 = 5 - digital_bullying_by_peers_0
+  )
+
+full_sample_fullsamp <- full_sample_fullsamp %>%
+  mutate(
+    bullying_n = rowSums(
+      !is.na(
+        dplyr::select(
+          .,
+          bullying_by_peers_rev_0,
+          digital_bullying_by_peers_rev_0
+        )
+      )
+    ),
+    
+    bullying_mean_0 = ifelse(
+      bullying_n >= 2,
+      rowMeans(
+        dplyr::select(
+          .,
+          bullying_by_peers_rev_0,
+          digital_bullying_by_peers_rev_0
+        ),
+        na.rm = TRUE
+      ),
+      NA_real_
+    )
+  )
+
+summary(full_sample_fullsamp$bullying_mean_0)
+
+table(
+  full_sample_fullsamp$bullying_n,
+  useNA = "ifany"
+)
+
+#################################
+### CREATE AGE PROXY VARIABLE ###
+#################################
+
+full_sample_fullsamp <- full_sample_fullsamp %>%
+  mutate(
+    age = grade + 12.5
+  )
+
+table(
+  full_sample_fullsamp$grade,
+  full_sample_fullsamp$age,
+  useNA = "ifany"
+)
+
+summary(full_sample_fullsamp$age)
+
+##################################
+### CREATE URBANICITY VARIABLE ###
+##################################
+
+full_sample_fullsamp <- full_sample_fullsamp %>%
+  mutate(
+    urbanicity_0 = 5 - centrality_0
+  )
+
+table(
+  full_sample_fullsamp$centrality_0,
+  full_sample_fullsamp$urbanicity_0,
+  useNA = "ifany"
+)
+
+summary(full_sample_fullsamp$urbanicity_0)
+
+################################
+### CREATE BINARY COVARIATES ###
+################################
+
+full_sample_fullsamp <- full_sample_fullsamp %>%
+  mutate(
+    gender_binary = case_when(
+      gender == 1 ~ 0,
+      gender == 2 ~ 1,
+      TRUE ~ NA_real_
+    ),
+    
+    university_plans_binary = case_when(
+      university_plans == 1 ~ 1,
+      university_plans %in% c(2, 3) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    no_close_peer_relationship_binary = case_when(
+      peer_relationship %in% c(1, 2) ~ 0,
+      peer_relationship %in% c(3, 4) ~ 1,
+      TRUE ~ NA_real_
+    ),
+    
+    club_membership_binary = case_when(
+      club_membership == 1 ~ 1,
+      club_membership %in% c(2, 3) ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    family_violence_binary = case_when(
+      violence8 > 1 | violence9 > 1 ~ 1,
+      violence8 == 1 & violence9 == 1 ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    family_conflict_0 = case_when(
+      family_conflict == 1 ~ 3,
+      family_conflict == 2 ~ 2,
+      family_conflict == 3 ~ 1,
+      family_conflict == 4 ~ 0,
+      TRUE ~ NA_real_
+    ),
+    
+    cannabis_binary = case_when(
+      cannabis_use == 1 ~ 0,
+      cannabis_use %in% c(2, 3, 4, 5) ~ 1,
+      TRUE ~ NA_real_
+    )
+  )
+
+table(full_sample_fullsamp$gender, full_sample_fullsamp$gender_binary, useNA = "ifany")
+table(full_sample_fullsamp$university_plans, full_sample_fullsamp$university_plans_binary, useNA = "ifany")
+table(full_sample_fullsamp$peer_relationship, full_sample_fullsamp$no_close_peer_relationship_binary, useNA = "ifany")
+table(full_sample_fullsamp$club_membership, full_sample_fullsamp$club_membership_binary, useNA = "ifany")
+table(full_sample_fullsamp$cannabis_use, full_sample_fullsamp$cannabis_binary, useNA = "ifany")
+table(full_sample_fullsamp$family_conflict, full_sample_fullsamp$family_conflict_0, useNA = "ifany")
+
+table(
+  violence8 = full_sample_fullsamp$violence8,
+  violence9 = full_sample_fullsamp$violence9,
+  family_violence_binary = full_sample_fullsamp$family_violence_binary,
+  useNA = "ifany"
+)
+
+##################################################
+### CREATE DEPRESSED AND NON-DEPRESSED SAMPLES ###
+##################################################
+
+depressed_sample_fullsamp <- full_sample_fullsamp %>%
+  filter(
+    !is.na(depression_mean_original),
+    depression_mean_original >= 3
+  )
+
+non_depressed_sample_fullsamp <- full_sample_fullsamp %>%
+  filter(
+    !is.na(depression_mean_original),
+    depression_mean_original < 3
+  )
+
+total_minus_depressed_sample_fullsamp <- full_sample_fullsamp %>%
+  filter(
+    is.na(depression_mean_original) |
+      depression_mean_original < 3
+  )
+
+sample_overview_fullsamp <- tibble::tibble(
+  sample = c(
+    "Full sample",
+    "Depressed sample",
+    "Non-depressed sample with valid depression score",
+    "Total sample minus depressed sample"
+  ),
+  n = c(
+    nrow(full_sample_fullsamp),
+    nrow(depressed_sample_fullsamp),
+    nrow(non_depressed_sample_fullsamp),
+    nrow(total_minus_depressed_sample_fullsamp)
+  )
+)
+
+sample_overview_fullsamp
+
+#########################
+### CHRONBACH'S ALPHA ###
+#########################
+
+depression_alpha_fullsamp <- full_sample_fullsamp %>%
+  dplyr::select(depression1_0:depression6_0) %>%
+  psych::alpha()
+
+antisocial_alpha_fullsamp <- full_sample_fullsamp %>%
+  dplyr::select(
+    antisocial_traits1_0,
+    antisocial_traits12_0,
+    antisocial_traits15_0,
+    antisocial_traits16_0,
+    antisocial_traits18_0,
+    antisocial_traits25_0
+  ) %>%
+  psych::alpha()
+
+school_alpha_fullsamp <- full_sample_fullsamp %>%
+  dplyr::select(
+    school1_dissatisfaction_0,
+    school2_dissatisfaction_0,
+    school3_dissatisfaction_0,
+    school6_dissatisfaction_0
+  ) %>%
+  psych::alpha()
+
+bullying_alpha_fullsamp <- full_sample_fullsamp %>%
+  dplyr::select(
+    bullying_by_peers_rev_0,
+    digital_bullying_by_peers_rev_0
+  ) %>%
+  psych::alpha()
+
+cronbach_alpha_summary_fullsamp <- tibble::tibble(
+  Scale = c(
+    "Depressive symptoms",
+    "Antisocial traits",
+    "School dissatisfaction",
+    "Bullying"
+  ),
+  `Full sample` = c(
+    round(depression_alpha_fullsamp$total$raw_alpha, 3),
+    round(antisocial_alpha_fullsamp$total$raw_alpha, 3),
+    round(school_alpha_fullsamp$total$raw_alpha, 3),
+    round(bullying_alpha_fullsamp$total$raw_alpha, 3)
+  )
+)
+
+cronbach_alpha_summary_fullsamp
+
+################################################
+### MUNICIPALITY CLUSTERING: NULL ICC MODELS ###
+################################################
+
+icc_binary_data_fullsamp <- full_sample_fullsamp %>%
+  filter(
+    !is.na(climate_binary),
+    !is.na(municipality)
+  ) %>%
+  mutate(
+    climate_disengagement = 1 - climate_binary,
+    municipality = factor(municipality)
+  )
+
+icc_ordinal_data_fullsamp <- full_sample_fullsamp %>%
+  filter(
+    !is.na(climate_ordinal),
+    !is.na(municipality)
+  ) %>%
+  mutate(
+    climate_ordinal = factor(
+      climate_ordinal,
+      ordered = TRUE
+    ),
+    municipality = factor(municipality)
+  )
+
+icc_binary_model_fullsamp <- lme4::glmer(
+  climate_disengagement ~ 1 + (1 | municipality),
+  data = icc_binary_data_fullsamp,
+  family = binomial(link = "logit"),
+  control = glmerControl(
+    optimizer = "bobyqa",
+    optCtrl = list(maxfun = 100000)
+  )
+)
+
+icc_ordinal_model_fullsamp <- ordinal::clmm(
+  climate_ordinal ~ 1 + (1 | municipality),
+  data = icc_ordinal_data_fullsamp,
+  link = "logit",
+  Hess = TRUE
+)
+
+binary_municipality_variance_fullsamp <- as.data.frame(
+  lme4::VarCorr(icc_binary_model_fullsamp)
+)$vcov[1]
+
+ordinal_municipality_variance_fullsamp <- as.numeric(
+  ordinal::VarCorr(icc_ordinal_model_fullsamp)$municipality
+)
+
+icc_summary_fullsamp <- tibble::tibble(
+  outcome = c(
+    "Climate disengagement",
+    "Climate worry severity among worried adolescents"
+  ),
+  model = c(
+    "Binary logistic null model",
+    "Ordinal logistic null model"
+  ),
+  n_observations = c(
+    nrow(icc_binary_data_fullsamp),
+    nrow(icc_ordinal_data_fullsamp)
+  ),
+  n_municipalities = c(
+    dplyr::n_distinct(icc_binary_data_fullsamp$municipality),
+    dplyr::n_distinct(icc_ordinal_data_fullsamp$municipality)
+  ),
+  municipality_variance = c(
+    binary_municipality_variance_fullsamp,
+    ordinal_municipality_variance_fullsamp
+  ),
+  residual_variance = pi^2 / 3,
+  icc = municipality_variance / (municipality_variance + residual_variance)
+)
+
+icc_summary_fullsamp
+
+#################################################
+### NON-DEPRESSED SAMPLE SENSITIVITY ANALYSIS ###
+#################################################
+
+non_depressed_sample_models <- non_depressed_sample_fullsamp
+
+##########################################
+### MODEL-SPECIFIC IMPUTATION DATASETS ###
+##########################################
+
+outcomes_fullsamp <- full_sample_fullsamp %>%
+  dplyr::select(
+    climate_binary,
+    climate_ordinal
+  )
+
+main_covariates_fullsamp <- full_sample_fullsamp %>%
+  dplyr::select(
+    gender_binary,
+    age,
+    ses,
+    university_plans_binary,
+    depression_centered,
+    antisocial_centered,
+    cannabis_binary,
+    family_conflict_0,
+    school_dissatisfaction_mean_0,
+    bullying_mean_0,
+    no_close_peer_relationship_binary,
+    club_membership_binary,
+    social_media_time_0,
+    social_media_pressure_0,
+    reading_time_0,
+    urbanicity_0,
+    municipality,
+    family_violence_binary
+  )
+
+imputation_data_fullsamp <- bind_cols(
+  outcomes_fullsamp,
+  main_covariates_fullsamp
+) %>%
+  mutate(
+    across(
+      where(~ inherits(.x, "haven_labelled")),
+      haven::zap_labels
+    )
+  )
+
+mice::md.pattern(imputation_data_fullsamp)
+
+gg_miss_upset(
+  main_covariates_fullsamp
+)
+
+####################################
+### IMPUTATION FOR ORDINAL MODEL ###
+####################################
+
+imputation_data_ordinal_fullsamp <- imputation_data_fullsamp %>%
+  filter(
+    !is.na(climate_ordinal)
+  ) %>%
+  dplyr::select(
+    -climate_binary
+  )
+
+init_imp_ordinal_fullsamp <- mice(
+  imputation_data_ordinal_fullsamp,
+  maxit = 0
+)
+
+predictor_matrix_ordinal_fullsamp <- init_imp_ordinal_fullsamp$predictorMatrix
+imp_method_ordinal_fullsamp <- init_imp_ordinal_fullsamp$method
+
+imp_method_ordinal_fullsamp["climate_ordinal"] <- ""
+
+set.seed(12345)
+
+Imp_ordinal_fullsamp <- mice(
+  imputation_data_ordinal_fullsamp,
+  m = 10,
+  maxit = 5,
+  method = imp_method_ordinal_fullsamp,
+  predictorMatrix = predictor_matrix_ordinal_fullsamp
+)
+
+complete_ordinal_1_fullsamp <- complete(
+  Imp_ordinal_fullsamp,
+  1
+)
+
+colSums(
+  is.na(complete_ordinal_1_fullsamp)
+)
+
+###################################
+### IMPUTATION FOR BINARY MODEL ###
+###################################
+
+imputation_data_binary_fullsamp <- imputation_data_fullsamp %>%
+  filter(
+    !is.na(climate_binary)
+  ) %>%
+  dplyr::select(
+    -climate_ordinal
+  )
+
+init_imp_binary_fullsamp <- mice(
+  imputation_data_binary_fullsamp,
+  maxit = 0
+)
+
+predictor_matrix_binary_fullsamp <- init_imp_binary_fullsamp$predictorMatrix
+imp_method_binary_fullsamp <- init_imp_binary_fullsamp$method
+
+imp_method_binary_fullsamp["climate_binary"] <- ""
+
+set.seed(12345)
+
+Imp_binary_fullsamp <- mice(
+  imputation_data_binary_fullsamp,
+  m = 10,
+  maxit = 5,
+  method = imp_method_binary_fullsamp,
+  predictorMatrix = predictor_matrix_binary_fullsamp
+)
+
+complete_binary_1_fullsamp <- complete(
+  Imp_binary_fullsamp,
+  1
+)
+
+colSums(
+  is.na(complete_binary_1_fullsamp)
+)
+
+###################
+### DIAGNOSTICS ###
+###################
+
+correlation_data_ordinal_fullsamp <- complete_ordinal_1_fullsamp %>%
+  dplyr::transmute(
+    climate_ordinal = as.numeric(climate_ordinal),
+    gender_binary,
+    age,
+    ses,
+    university_plans_binary,
+    urbanicity_0,
+    depression_centered,
+    antisocial_centered,
+    cannabis_binary,
+    family_conflict_0,
+    family_violence_binary,
+    bullying_mean_0,
+    school_dissatisfaction_mean_0,
+    no_close_peer_relationship_binary,
+    club_membership_binary,
+    social_media_time_0,
+    social_media_pressure_0,
+    reading_time_0
+  )
+
+correlation_matrix_ordinal_fullsamp <- cor(
+  correlation_data_ordinal_fullsamp,
+  use = "pairwise.complete.obs"
+)
+
+round(
+  correlation_matrix_ordinal_fullsamp,
+  2
+)
+
+vif_model_ordinal_fullsamp <- lm(
+  as.numeric(climate_ordinal) ~
+    depression_centered +
+    antisocial_centered +
+    gender_binary +
+    age +
+    ses +
+    university_plans_binary +
+    cannabis_binary +
+    family_conflict_0 +
+    school_dissatisfaction_mean_0 +
+    bullying_mean_0 +
+    no_close_peer_relationship_binary +
+    club_membership_binary +
+    social_media_time_0 +
+    social_media_pressure_0 +
+    reading_time_0 +
+    urbanicity_0 +
+    family_violence_binary,
+  
+  data = complete_ordinal_1_fullsamp
+)
+
+vif(vif_model_ordinal_fullsamp)
+
+
+##########################################
+### MODEL-SPECIFIC IMPUTATION DATASETS ###
+##########################################
+
+outcomes_nondep <- non_depressed_sample_models %>%
+  dplyr::select(
+    climate_binary,
+    climate_ordinal
+  )
+
+main_covariates_nondep <- non_depressed_sample_models %>%
+  dplyr::select(
+    gender_binary,
+    age,
+    ses,
+    university_plans_binary,
+    depression_centered,
+    antisocial_centered,
+    cannabis_binary,
+    family_conflict_0,
+    school_dissatisfaction_mean_0,
+    bullying_mean_0,
+    no_close_peer_relationship_binary,
+    club_membership_binary,
+    social_media_time_0,
+    social_media_pressure_0,
+    reading_time_0,
+    urbanicity_0,
+    municipality,
+    family_violence_binary
+  )
+
+imputation_data_nondep <- bind_cols(
+  outcomes_nondep,
+  main_covariates_nondep
+) %>%
+  mutate(
+    across(
+      where(~ inherits(.x, "haven_labelled")),
+      haven::zap_labels
+    )
+  )
+
+mice::md.pattern(imputation_data_nondep)
+
+####################################
+### IMPUTATION FOR ORDINAL MODEL ###
+####################################
+
+imputation_data_ordinal_nondep <- imputation_data_nondep %>%
+  filter(
+    !is.na(climate_ordinal)
+  ) %>%
+  dplyr::select(
+    -climate_binary
+  )
+
+init_imp_ordinal_nondep <- mice(
+  imputation_data_ordinal_nondep,
+  maxit = 0
+)
+
+predictor_matrix_ordinal_nondep <- init_imp_ordinal_nondep$predictorMatrix
+imp_method_ordinal_nondep <- init_imp_ordinal_nondep$method
+
+imp_method_ordinal_nondep["climate_ordinal"] <- ""
+imp_method_ordinal_nondep["depression_centered"] <- ""
+
+set.seed(12345)
+
+Imp_ordinal_nondep <- mice(
+  imputation_data_ordinal_nondep,
+  m = 10,
+  maxit = 5,
+  method = imp_method_ordinal_nondep,
+  predictorMatrix = predictor_matrix_ordinal_nondep
+)
+
+complete_ordinal_1_nondep <- complete(
+  Imp_ordinal_nondep,
+  1
+)
+
+colSums(
+  is.na(complete_ordinal_1_nondep)
+)
+
+###################################
+### IMPUTATION FOR BINARY MODEL ###
+###################################
+
+imputation_data_binary_nondep <- imputation_data_nondep %>%
+  filter(
+    !is.na(climate_binary)
+  ) %>%
+  dplyr::select(
+    -climate_ordinal
+  )
+
+init_imp_binary_nondep <- mice(
+  imputation_data_binary_nondep,
+  maxit = 0
+)
+
+predictor_matrix_binary_nondep <- init_imp_binary_nondep$predictorMatrix
+imp_method_binary_nondep <- init_imp_binary_nondep$method
+
+imp_method_binary_nondep["climate_binary"] <- ""
+imp_method_binary_nondep["depression_centered"] <- ""
+
+set.seed(12345)
+
+Imp_binary_nondep <- mice(
+  imputation_data_binary_nondep,
+  m = 10,
+  maxit = 5,
+  method = imp_method_binary_nondep,
+  predictorMatrix = predictor_matrix_binary_nondep
+)
+
+complete_binary_1_nondep <- complete(
+  Imp_binary_nondep,
+  1
+)
+
+colSums(
+  is.na(complete_binary_1_nondep)
+)
+
+########################
+### HELPER FUNCTIONS ###
+########################
+
+pool_mi_estimates_nondep <- function(estimates_list) {
+  
+  model_terms <- estimates_list[[1]]$term
+  
+  purrr::map_dfr(
+    model_terms,
+    function(current_term) {
+      
+      term_data <- purrr::map_dfr(
+        estimates_list,
+        ~ dplyr::filter(.x, term == current_term)
+      )
+      
+      pooled_term <- mice::pool.scalar(
+        Q = term_data$estimate,
+        U = term_data$variance,
+        n = Inf
+      )
+      
+      pooled_estimate <- pooled_term$qbar
+      pooled_se <- sqrt(pooled_term$t)
+      pooled_df <- pooled_term$df
+      pooled_statistic <- pooled_estimate / pooled_se
+      
+      tibble::tibble(
+        term = current_term,
+        estimate = pooled_estimate,
+        std.error = pooled_se,
+        df = pooled_df,
+        statistic = pooled_statistic,
+        p.value = 2 * stats::pt(
+          q = abs(pooled_statistic),
+          df = pooled_df,
+          lower.tail = FALSE
+        ),
+        conf.low = pooled_estimate -
+          stats::qt(.975, df = pooled_df) * pooled_se,
+        conf.high = pooled_estimate +
+          stats::qt(.975, df = pooled_df) * pooled_se
+      )
+    }
+  )
+}
+
+extract_ordinal_estimates_nondep <- function(model, data, cluster_variable = "municipality") {
+  
+  model_rows <- as.integer(rownames(stats::model.frame(model)))
+  cluster_id <- as.factor(data[[cluster_variable]][model_rows])
+  
+  clustered_vcov <- sandwich::vcovCL(
+    x = model,
+    cluster = cluster_id,
+    type = "HC1"
+  )
+  
+  slope_terms <- names(stats::coef(model))
+  
+  tibble::tibble(
+    term = slope_terms,
+    estimate = unname(stats::coef(model)[slope_terms]),
+    variance = unname(diag(clustered_vcov)[slope_terms])
+  )
+}
+
+extract_binary_estimates_nondep <- function(model, data, cluster_variable = "municipality") {
+  
+  model_rows <- as.integer(rownames(stats::model.frame(model)))
+  cluster_id <- as.factor(data[[cluster_variable]][model_rows])
+  
+  clustered_vcov <- sandwich::vcovCL(
+    x = model,
+    cluster = cluster_id,
+    type = "HC1"
+  )
+  
+  model_terms <- names(stats::coef(model))
+  
+  tibble::tibble(
+    term = model_terms,
+    estimate = unname(stats::coef(model)[model_terms]),
+    variance = unname(diag(clustered_vcov)[model_terms])
+  )
+}
+
+label_terms_nondep <- function(data) {
+  data %>%
+    mutate(
+      term_label = case_when(
+        term == "(Intercept)" ~ "Intercept",
+        term == "depression_centered" ~ "Depressive symptoms",
+        term == "antisocial_centered" ~ "Antisocial traits",
+        term == "depression_centered:antisocial_centered" ~
+          "Depressive symptoms x antisocial traits",
+        term == "gender_binary" ~ "Gender (girls)",
+        term == "age" ~ "Age",
+        term == "ses" ~ "Socioeconomic status",
+        term == "university_plans_binary" ~ "University plans",
+        term == "cannabis_binary" ~ "Cannabis use",
+        term == "family_conflict_0" ~ "Family conflict",
+        term == "family_violence_binary" ~ "Family violence",
+        term == "bullying_mean_0" ~ "Bullying",
+        term == "school_dissatisfaction_mean_0" ~ "School dissatisfaction",
+        term == "no_close_peer_relationship_binary" ~ "No close peer relationship",
+        term == "club_membership_binary" ~ "Club membership",
+        term == "social_media_time_0" ~ "Social media time",
+        term == "social_media_pressure_0" ~ "Social media pressure",
+        term == "reading_time_0" ~ "Reading time",
+        term == "urbanicity_0" ~ "Urbanicity",
+        TRUE ~ term
+      )
+    )
+}
+
+format_or_results_nondep <- function(data) {
+  data %>%
+    mutate(
+      odds_ratio = exp(estimate),
+      or_lower_ci = exp(conf.low),
+      or_upper_ci = exp(conf.high),
+      OR_CI = paste0(
+        sprintf("%.2f", odds_ratio),
+        " (",
+        sprintf("%.2f", or_lower_ci),
+        ", ",
+        sprintf("%.2f", or_upper_ci),
+        ")"
+      ),
+      significance = case_when(
+        p.value < .001 ~ "***",
+        p.value < .01 ~ "**",
+        p.value < .05 ~ "*",
+        TRUE ~ ""
+      ),
+      p = case_when(
+        p.value < .001 ~ paste0("< .001", significance),
+        TRUE ~ paste0(sprintf("%.3f", p.value), significance)
+      )
+    )
+}
+
+#########################################
+### ORDINAL LOGISTIC REGRESSION MODEL ###
+#########################################
+
+ordinal_completed_data_nondep <- mice::complete(
+  Imp_ordinal_nondep,
+  action = "all"
+)
+
+ordinal_cluster_summary_nondep <- purrr::map_dfr(
+  ordinal_completed_data_nondep,
+  ~ tibble::tibble(
+    n_observations = nrow(.x),
+    n_municipalities = dplyr::n_distinct(.x$municipality),
+    min_cluster_size = min(table(.x$municipality)),
+    median_cluster_size = median(as.numeric(table(.x$municipality))),
+    max_cluster_size = max(table(.x$municipality))
+  ),
+  .id = "imputation"
+)
+
+print(ordinal_cluster_summary_nondep)
+
+ordinal_formula_nondep <- factor(climate_ordinal, ordered = TRUE) ~
+  depression_centered *
+  antisocial_centered +
+  gender_binary +
+  age +
+  ses +
+  university_plans_binary +
+  cannabis_binary +
+  family_conflict_0 +
+  school_dissatisfaction_mean_0 +
+  bullying_mean_0 +
+  no_close_peer_relationship_binary +
+  club_membership_binary +
+  social_media_time_0 +
+  social_media_pressure_0 +
+  reading_time_0 +
+  urbanicity_0 +
+  family_violence_binary
+
+ordinal_model_list_nondep <- purrr::map(
+  ordinal_completed_data_nondep,
+  ~ MASS::polr(
+    formula = ordinal_formula_nondep,
+    data = .x,
+    Hess = TRUE,
+    model = TRUE
+  )
+)
+
+ordinal_estimates_nondep <- purrr::map2(
+  ordinal_model_list_nondep,
+  ordinal_completed_data_nondep,
+  extract_ordinal_estimates_nondep
+)
+
+standard_ordinal_results_nondep <- pool_mi_estimates_nondep(
+  ordinal_estimates_nondep
+)
+
+standard_ordinal_results_or_nondep <- standard_ordinal_results_nondep %>%
+  as_tibble() %>%
+  label_terms_nondep() %>%
+  format_or_results_nondep()
+
+standard_ordinal_results_gt_nondep <- standard_ordinal_results_or_nondep %>%
+  dplyr::select(
+    term_label,
+    OR_CI,
+    p
+  ) %>%
+  gt() %>%
+  tab_header(
+    title = "Non-depressed sample ordinal logistic regression predicting climate worry"
+  ) %>%
+  cols_label(
+    term_label = "Predictor",
+    OR_CI = "OR (95% CI)",
+    p = "p"
+  ) %>%
+  tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+standard_ordinal_results_gt_nondep
+
+########################################
+### BINARY LOGISTIC REGRESSION MODEL ###
+########################################
+
+binary_completed_data_nondep <- mice::complete(
+  Imp_binary_nondep,
+  action = "all"
+)
+
+binary_cluster_summary_nondep <- purrr::map_dfr(
+  binary_completed_data_nondep,
+  ~ tibble::tibble(
+    n_observations = nrow(.x),
+    n_municipalities = dplyr::n_distinct(.x$municipality),
+    min_cluster_size = min(table(.x$municipality)),
+    median_cluster_size = median(as.numeric(table(.x$municipality))),
+    max_cluster_size = max(table(.x$municipality))
+  ),
+  .id = "imputation"
+)
+
+print(binary_cluster_summary_nondep)
+
+binary_formula_nondep <- I(1 - climate_binary) ~
+  depression_centered *
+  antisocial_centered +
+  gender_binary +
+  age +
+  ses +
+  university_plans_binary +
+  cannabis_binary +
+  family_conflict_0 +
+  school_dissatisfaction_mean_0 +
+  bullying_mean_0 +
+  no_close_peer_relationship_binary +
+  club_membership_binary +
+  social_media_time_0 +
+  social_media_pressure_0 +
+  reading_time_0 +
+  urbanicity_0 +
+  family_violence_binary
+
+binary_model_list_nondep <- purrr::map(
+  binary_completed_data_nondep,
+  ~ glm(
+    formula = binary_formula_nondep,
+    data = .x,
+    family = binomial(link = "logit")
+  )
+)
+
+binary_estimates_nondep <- purrr::map2(
+  binary_model_list_nondep,
+  binary_completed_data_nondep,
+  extract_binary_estimates_nondep
+)
+
+binary_results_nondep <- pool_mi_estimates_nondep(
+  binary_estimates_nondep
+)
+
+binary_results_or_nondep <- binary_results_nondep %>%
+  as_tibble() %>%
+  label_terms_nondep() %>%
+  format_or_results_nondep()
+
+binary_results_gt_nondep <- binary_results_or_nondep %>%
+  dplyr::filter(
+    term != "(Intercept)"
+  ) %>%
+  dplyr::select(
+    term_label,
+    OR_CI,
+    p
+  ) %>%
+  gt() %>%
+  tab_header(
+    title = "Non-depressed sample binary logistic regression predicting no climate worry"
+  ) %>%
+  cols_label(
+    term_label = "Predictor",
+    OR_CI = "OR (95% CI)",
+    p = "p"
+  ) %>%
+  
+tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+binary_results_gt_nondep
+
+################################
+### PRINT RAW RESULT OBJECTS ###
+################################
+
+print(
+  standard_ordinal_results_or_nondep,
+  n = Inf
+)
+
+print(
+  binary_results_or_nondep,
+  n = Inf
+)
+
+#################################################
+### SAMPLE SIZE CHECK: NON-DEPRESSED ANALYSES ###
+#################################################
+
+# Ordinal model: climate worry severity among those reporting any worry
+ordinal_n_check_nondep <- purrr::map2_dfr(
+  ordinal_model_list_nondep,
+  ordinal_completed_data_nondep,
+  ~ tibble::tibble(
+    imputation = NA_integer_,
+    n_model = nobs(.x),
+    n_dataset = nrow(.y),
+    n_municipalities = dplyr::n_distinct(.y$municipality)
+  ),
+  .id = "imputation"
+)
+
+# Binary model: no climate worry versus any climate worry
+binary_n_check_nondep <- purrr::map2_dfr(
+  binary_model_list_nondep,
+  binary_completed_data_nondep,
+  ~ tibble::tibble(
+    imputation = NA_integer_,
+    n_model = nobs(.x),
+    n_dataset = nrow(.y),
+    n_municipalities = dplyr::n_distinct(.y$municipality)
+  ),
+  .id = "imputation"
+)
+
+nondep_model_n_summary <- bind_rows(
+  ordinal_n_check_nondep %>%
+    mutate(model = "Ordinal model"),
+  binary_n_check_nondep %>%
+    mutate(model = "Binary model")
+) %>%
+  dplyr::select(
+    model,
+    imputation,
+    n_model,
+    n_dataset,
+    n_municipalities
+  )
+
+nondep_model_n_summary
+
+# Compact summary
+nondep_model_n_summary %>%
+  group_by(model) %>%
+  summarise(
+    min_n_model = min(n_model),
+    max_n_model = max(n_model),
+    min_n_dataset = min(n_dataset),
+    max_n_dataset = max(n_dataset),
+    min_municipalities = min(n_municipalities),
+    max_municipalities = max(n_municipalities),
+    .groups = "drop"
