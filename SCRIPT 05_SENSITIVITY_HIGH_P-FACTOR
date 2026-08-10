@@ -1,0 +1,246 @@
+
+###################################################
+### SENSITIVITY HIGH VERSUS LOW P-FACTOR SAMPLE ###
+### [HIGH P-FACTOR SUBGROUP: Q4 ON BOTH SCALES] ###
+###################################################
+
+# LOAD PACKAGES
+library(rstatix)
+library(gt)
+library(dplyr)
+library(tidyr)
+
+# Define the analytic data for p-factor subgrouping.
+# Participants must have valid scores on both depressive symptoms and antisocial traits.
+
+pfactor_comparison_data <- depressed_sample %>%
+  filter(
+    !is.na(depression_mean_0),
+    !is.na(antisocial_mean_0)
+  )
+
+# Define 75th percentile cut-offs within the depressed sample.
+
+depression_q75 <- quantile(
+  pfactor_comparison_data$depression_mean_0,
+  probs = .75,
+  na.rm = TRUE
+)
+
+antisocial_q75 <- quantile(
+  pfactor_comparison_data$antisocial_mean_0,
+  probs = .75,
+  na.rm = TRUE
+)
+
+# Create high and low p-factor groups.
+# High p-factor = above the 75th percentile on both depressive symptoms and antisocial traits.
+# Low p-factor = all other participants in the depressed sample.
+
+pfactor_comparison_data <- pfactor_comparison_data %>%
+  mutate(
+    pfactor_group = case_when(
+      depression_mean_0 > depression_q75 &
+        antisocial_mean_0 > antisocial_q75 ~ "High p-factor sample",
+      TRUE ~ "Low p-factor sample"
+    )
+  )
+
+# Store the two subsamples separately.
+
+high_pfactor_sample <- pfactor_comparison_data %>%
+  filter(pfactor_group == "High p-factor sample")
+
+low_pfactor_sample <- pfactor_comparison_data %>%
+  filter(pfactor_group == "Low p-factor sample")
+
+# Check subgroup sizes.
+
+pfactor_group_summary <- pfactor_comparison_data %>%
+  count(pfactor_group) %>%
+  mutate(
+    percent = 100 * n / sum(n)
+  )
+
+pfactor_group_summary
+
+####################################################
+### CLIMATE WORRY DISTRIBUTION BY P-FACTOR GROUP ###
+####################################################
+
+climate_worry_distribution <- pfactor_comparison_data %>%
+  mutate(
+    climate_worry_label = case_when(
+      climate_worry == 1 ~ "Not worried",
+      climate_worry == 2 ~ "A little worried",
+      climate_worry == 3 ~ "Quite worried",
+      climate_worry == 4 ~ "Very worried"
+    )
+  ) %>%
+  group_by(
+    pfactor_group,
+    climate_worry_label
+  ) %>%
+  summarise(
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  group_by(pfactor_group) %>%
+  mutate(
+    percent = round(
+      100 * n / sum(n),
+      1
+    )
+  ) %>%
+  ungroup()
+
+climate_worry_distribution
+
+# CHI-SQUARED TEST
+pfactor_chisq <- pfactor_comparison_data %>%
+  select(
+    pfactor_group,
+    climate_worry
+  ) %>%
+  table()
+
+chisq.test(pfactor_chisq)
+
+
+# CRAMER'S V 
+pfactor_cramers_v <- cramer_v(
+  pfactor_chisq
+)
+
+pfactor_cramers_v
+
+#################################################
+### TABLE: CLIMATE WORRY BY P-FACTOR SUBGROUP ###
+#################################################
+
+# Statistical tests
+chi_result <- chisq.test(pfactor_chisq)
+
+cramers_v_result <- rstatix::cramer_v(
+  pfactor_chisq
+)
+
+# Group Ns
+group_n <- pfactor_comparison_data %>%
+  count(pfactor_group)
+
+high_n <- group_n %>%
+  filter(pfactor_group == "High p-factor sample") %>%
+  pull(n)
+
+low_n <- group_n %>%
+  filter(pfactor_group == "Low p-factor sample") %>%
+  pull(n)
+
+# Formatting
+chi_text <- paste0(
+  "\u03C7\u00B2(",
+  chi_result$parameter,
+  ") = ",
+  round(chi_result$statistic, 2)
+)
+
+p_text <- ifelse(
+  chi_result$p.value < .001,
+  "p < .001",
+  paste0("p = ", sprintf("%.3f", chi_result$p.value))
+)
+
+v_text <- paste0(
+  "V = ",
+  sprintf("%.3f", cramers_v_result)
+)
+
+# Main table
+climate_worry_table <- climate_worry_distribution %>%
+  mutate(
+    climate_worry_label = factor(
+      climate_worry_label,
+      levels = c(
+        "Not worried",
+        "A little worried",
+        "Quite worried",
+        "Very worried"
+      )
+    ),
+    value = sprintf(
+      "%d (%.1f%%)",
+      n,
+      percent
+    )
+  ) %>%
+  arrange(climate_worry_label) %>%
+  dplyr::select(
+    climate_worry_label,
+    pfactor_group,
+    value
+  ) %>%
+  pivot_wider(
+    names_from = pfactor_group,
+    values_from = value
+  ) %>%
+  mutate(
+    row_type = "descriptive"
+  ) %>%
+  bind_rows(
+    tibble(
+      climate_worry_label = "Inferential statistics",
+      `High p-factor sample` = "",
+      `Low p-factor sample` = "",
+      row_type = "section_header"
+    ),
+    tibble(
+      climate_worry_label = "Statistical comparison",
+      `High p-factor sample` = chi_text,
+      `Low p-factor sample` = p_text,
+      row_type = "inferential"
+    ),
+    tibble(
+      climate_worry_label = "Effect size",
+      `High p-factor sample` = v_text,
+      `Low p-factor sample` = "",
+      row_type = "inferential"
+    )
+  )
+
+climate_worry_gt <- climate_worry_table %>%
+  gt() %>%
+  tab_header(
+    title = "Climate worry by p-factor subgroup"
+  ) %>%
+  cols_label(
+    climate_worry_label = "Climate worry",
+    `High p-factor sample` = paste0("High p-factor, n = ", high_n),
+    `Low p-factor sample` = paste0("Low p-factor, n = ", low_n)
+  ) %>%
+  cols_hide(
+    columns = row_type
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(
+      rows = row_type %in% c("section_header", "inferential")
+    )
+  ) %>%
+  tab_style(
+    style = cell_borders(
+      sides = "top",
+      weight = px(2)
+    ),
+    locations = cells_body(
+      rows = row_type == "section_header"
+    )
+  ) %>%
+  tab_options(
+    table.font.names = "Times New Roman",
+    table.font.size = 12,
+    heading.title.font.size = 13,
+    column_labels.font.weight = "bold"
+  )
+
+climate_worry_gt
