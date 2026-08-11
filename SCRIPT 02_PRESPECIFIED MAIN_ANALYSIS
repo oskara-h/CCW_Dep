@@ -2,6 +2,19 @@
 # SCRIPT 2 - MAIN ANALYSES ###
 ##############################
 
+# STATUS OF THIS ANALYSIS
+#
+# This script implements the primary unweighted multiple-imputation
+# analyses specified in the original analysis plan.
+#
+# In the final manuscript, the IPW estimates produced in Script 4
+# were selected for primary reporting. The present estimates are
+# retained to reproduce the prespecified analysis and are reported
+# as an unweighted comparison/sensitivity analysis.
+#
+# This change in the reporting hierarchy is documented as a
+# deviation from the original analysis plan.
+
 library(MASS)
 library(mice)
 library(brant)
