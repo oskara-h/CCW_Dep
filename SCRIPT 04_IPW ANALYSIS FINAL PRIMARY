@@ -1,12 +1,24 @@
-########################################
-### CCW SCRIPT 4 - IPW [SENSITIVITY] ###
-########################################
+##########################
+### CCW SCRIPT 4 - IPW ###
+##########################
 library(tidyverse)
 library(mice)
 library(MASS)
 library(broom)
 library(gt)
 library(sandwich)
+
+# STATUS OF THIS ANALYSIS
+#
+# IPW was originally specified as a sensitivity analysis for
+# missing climate-worry outcome data.
+#
+# In the final manuscript, these IPW estimates are reported as the
+# primary estimates. This represents a documented deviation from
+# the original analysis plan.
+#
+# The unweighted prespecified primary analysis is retained in
+# Script 2.
 
 # CREATE IPW IMPUTATION DATASET
  ## Separate imputation required to retain participants with missing CW data for the IPW response model
