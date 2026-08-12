@@ -367,7 +367,9 @@ format_ipw_table <- function(data) {
       
       term_label = case_when(
         term == "depression_centered" ~ "Depressive symptoms",
-        term == "antisocial_centered" ~ "Antisocial traits",
+        term == "antisocial_centered" ~ "Antisocial behavior",
+        term == "depression_centered:antisocial_centered" ~
+          "Depressive symptoms x antisocial behavior",
         term == "gender_binary" ~ "Gender (girls)",
         term == "age" ~ "Age",
         term == "ses" ~ "Socioeconomic status",
