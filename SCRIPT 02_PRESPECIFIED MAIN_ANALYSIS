@@ -8,12 +8,12 @@
 # analyses specified in the original analysis plan.
 #
 # In the final manuscript, the IPW estimates produced in Script 4
-# were selected for primary reporting. The present (unwegihted) estimates 
-# are retained to reproduce the prespecified analysis and are avaliable 
-# upon request. 
+# were selected for primary reporting. The (unwegihted) estimates 
+# created here in script 2 are retained to reproduce the prespecified 
+# analysis and are avaliable upon request. Weighted and unwegited estimates
+# produced the same substantive conclusions. 
 #
-# This change in the reporting hierarchy is documented as a
-# deviation from the original analysis plan.
+
 
 library(MASS)
 library(mice)
