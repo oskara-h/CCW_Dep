@@ -116,12 +116,12 @@ plot_data_climate_age <- depressed_sample %>%
       age,
       levels = c(13.5, 14.5, 15.5, 16.5, 17.5, 18.5),
       labels = c(
-        "13-14 yrs",
+        "13.5-14 yrs",
         "14-15 yrs",
         "15-16 yrs",
         "16-17 yrs",
         "17-18 yrs",
-        "18-19 yrs"
+        "18-18.5 yrs"
       )
     )
   ) %>%
