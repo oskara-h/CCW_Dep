@@ -1,0 +1,595 @@
+##########################
+### SCRIPT 8 - FIGURES ###
+##########################
+
+library(tidyverse)
+
+######################################################
+### FIGURE 1: CLIMATE WORRY DISTRIBUTION BY GENDER ###
+######################################################
+
+plot_data_gender <- depressed_sample %>%
+  dplyr::filter(
+    !is.na(climate_worry_0),
+    !is.na(gender_binary)
+  ) %>%
+  dplyr::mutate(
+    climate_worry = factor(
+      climate_worry_0,
+      levels = c(0, 1, 2, 3),
+      labels = c(
+        "Not at all worried",
+        "A little worried",
+        "Quite worried",
+        "Very worried"
+      )
+    ),
+
+    gender = factor(
+      gender_binary,
+      levels = c(0, 1),
+      labels = c(
+        "Boys",
+        "Girls"
+      )
+    )
+  ) %>%
+  dplyr::count(
+    climate_worry,
+    gender,
+    name = "n"
+  ) %>%
+  dplyr::group_by(
+    gender
+  ) %>%
+  dplyr::mutate(
+    percent = n / sum(n) * 100
+  ) %>%
+  dplyr::ungroup()
+
+climate_worry_gender_plot <- ggplot(
+  plot_data_gender,
+  aes(
+    x = climate_worry,
+    y = percent,
+    fill = gender
+  )
+) +
+  geom_col(
+    position = position_dodge(width = 0.90),
+    width = 0.90,
+    colour = "black",
+    linewidth = 0.25
+  ) +
+scale_fill_manual(
+  values = c(
+    "Boys"  = "#4F6D8A",
+    "Girls" = "#B45A5A"
+  )
+) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  labs(
+    x = "Climate change worry",
+    y = "Percentage",
+    fill = NULL
+  ) +
+  theme_classic(
+    base_family = "Times New Roman",
+    base_size = 22
+  ) +
+  theme(
+    axis.title = element_text(size = 22),
+    axis.text = element_text(size = 22),
+    legend.position = "top",
+    legend.text = element_text(size = 22),
+    plot.title = element_blank()
+  )
+
+climate_worry_gender_plot
+
+
+##########################################################
+### FIGURE 2: CLIMATE WORRY BY AGE IN DEPRESSED SAMPLE ###
+##########################################################
+
+plot_data_climate_age <- depressed_sample %>%
+  dplyr::filter(
+    !is.na(climate_worry_0),
+    !is.na(age)
+  ) %>%
+  dplyr::mutate(
+    climate_worry = factor(
+      climate_worry_0,
+      levels = c(0, 1, 2, 3),
+      labels = c(
+        "Not at all\nworried",
+        "A little\nworried",
+        "Quite\nworried",
+        "Very\nworried"
+      )
+    ),
+    
+    age_proxy = factor(
+      age,
+      levels = c(13.5, 14.5, 15.5, 16.5, 17.5, 18.5),
+      labels = c(
+        "13-14 yrs",
+        "14-15 yrs",
+        "15-16 yrs",
+        "16-17 yrs",
+        "17-18 yrs",
+        "18-19 yrs"
+      )
+    )
+  ) %>%
+  dplyr::filter(
+    !is.na(age_proxy)
+  ) %>%
+  dplyr::count(
+    climate_worry,
+    age_proxy,
+    name = "n"
+  ) %>%
+  dplyr::group_by(
+    age_proxy
+  ) %>%
+  dplyr::mutate(
+    percent = n / sum(n) * 100
+  ) %>%
+  dplyr::ungroup()
+
+climate_worry_age_plot <- ggplot(
+  plot_data_climate_age,
+  aes(
+    x = age_proxy,
+    y = percent,
+    fill = climate_worry
+  )
+) +
+  geom_col(
+    position = position_dodge(width = 0.90),
+    width = 0.90,
+    colour = "black",
+    linewidth = 0.25
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Not at all\nworried" = "#F6E2E2",
+      "A little\nworried"   = "#DFAEAE",
+      "Quite\nworried"      = "#C47A7A",
+      "Very\nworried"       = "#964949"
+    )
+  ) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  scale_x_discrete(
+    expand = expansion(mult = c(0.02, 0.02))
+  ) +
+  labs(
+    x = "Age",
+    y = "Percentage",
+    fill = "Worry about climate change"
+  ) +
+  theme_minimal(
+    base_family = "Times New Roman",
+    base_size = 22
+  ) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.title = element_text(size = 22),
+    axis.title.x = element_text(
+      margin = margin(t = 18)
+    ),
+    axis.text = element_text(size = 22),
+    axis.text.x = element_text(
+      margin = margin(t = -6)
+    ),
+    legend.title = element_text(size = 22),
+    legend.text = element_text(size = 20),
+    legend.position = "right",
+    plot.title = element_blank()
+  )
+
+climate_worry_age_plot
+
+ggsave(
+  filename = "climate_worry_by_age_depressed_sample.png",
+  plot = climate_worry_age_plot,
+  width = 8,
+  height = 5,
+  dpi = 600
+)
+
+ggsave(
+  filename = "climate_worry_by_age_depressed_sample.pdf",
+  plot = climate_worry_age_plot,
+  width = 8,
+  height = 5,
+  device = cairo_pdf
+)
+
+#####################################################
+### SFIGURE 1: CLIMATE WORRY BY P-FACTOR SUBGROUP ###
+#####################################################
+
+climate_worry_figure_data <- climate_worry_distribution %>%
+  group_by(pfactor_group) %>%
+  mutate(
+    plot_percent = 100 * n / sum(n)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    pfactor_group = factor(
+      pfactor_group,
+      levels = c(
+        "Low p-factor sample",
+        "High p-factor sample"
+      )
+    ),
+    climate_worry_label = factor(
+      climate_worry_label,
+      levels = c(
+        "Not worried",
+        "A little worried",
+        "Quite worried",
+        "Very worried"
+      )
+    )
+  )
+
+# Define colours used in the original figure.
+
+climate_worry_colours <- c(
+  "Not worried" = "#F8766D",
+  "A little worried" = "#7CAE00",
+  "Quite worried" = "#00BFC4",
+  "Very worried" = "#C77CFF"
+)
+
+plot_pfactor_climate_worry <- ggplot(
+  climate_worry_figure_data,
+  aes(
+    x = pfactor_group,
+    y = plot_percent,
+    fill = climate_worry_label
+  )
+) +
+  geom_col(
+    width = 0.55,
+    color = "black",
+    linewidth = 0.5
+  ) +
+  geom_text(
+    aes(
+      label = sprintf(
+        "%.1f%%",
+        plot_percent
+      )
+    ),
+    position = position_stack(
+      vjust = 0.5
+    ),
+    family = "Times New Roman",
+    size = 5,
+    color = "black"
+  ) +
+  scale_fill_manual(
+    values = climate_worry_colours,
+    breaks = c(
+      "Not worried",
+      "A little worried",
+      "Quite worried",
+      "Very worried"
+    )
+  ) +
+  scale_y_continuous(
+    breaks = seq(
+      0,
+      100,
+      by = 25
+    ),
+    labels = function(x) paste0(x, "%"),
+    limits = c(0, 100),
+    expand = expansion(
+      mult = c(0, 0)
+    )
+  ) +
+  labs(
+    x = NULL,
+    y = "Percentage",
+    fill = "Climate worry"
+  ) +
+  theme_classic(
+    base_family = "Times New Roman",
+    base_size = 18
+  ) +
+  theme(
+    text = element_text(
+      family = "Times New Roman",
+      size = 18,
+      color = "black"
+    ),
+    axis.title.y = element_text(
+      family = "Times New Roman",
+      size = 18,
+      margin = margin(r = 10),
+      color = "black"
+    ),
+    axis.text.x = element_text(
+      family = "Times New Roman",
+      size = 17,
+      color = "black"
+    ),
+    axis.text.y = element_text(
+      family = "Times New Roman",
+      size = 16,
+      color = "black"
+    ),
+    legend.title = element_text(
+      family = "Times New Roman",
+      size = 17,
+      color = "black"
+    ),
+    legend.text = element_text(
+      family = "Times New Roman",
+      size = 16,
+      color = "black"
+    ),
+    legend.position = "right",
+    plot.margin = margin(
+      t = 10,
+      r = 10,
+      b = 8,
+      l = 8
+    )
+  )
+
+plot_pfactor_climate_worry
+
+ggsave(
+  filename = "climate_worry_by_pfactor_subgroup.png",
+  plot = plot_pfactor_climate_worry,
+  width = 6.5,
+  height = 6,
+  dpi = 600
+)
+
+ggsave(
+  filename = "climate_worry_by_pfactor_subgroup.pdf",
+  plot = plot_pfactor_climate_worry,
+  width = 6.5,
+  height = 6,
+  device = cairo_pdf
+)
+
+########################################################
+### SFIGURE 2 - DEPRESSIVE SYMPTOMS BY CLIMATE WORRY ###
+########################################################
+
+climate_worry_colours <- c(
+  "Not worried" = "#7F8C8D",
+  "A little worried" = "#A8DADC",
+  "Quite worried" = "#457B9D",
+  "Very worried" = "#1D3557"
+)
+
+# Helper function for creating summary data
+
+summarise_by_climate_worry <- function(data, variable) {
+  
+  data %>%
+    mutate(
+      climate_worry_group = factor(
+        climate_worry,
+        levels = c(1, 2, 3, 4),
+        labels = c(
+          "Not worried",
+          "A little worried",
+          "Quite worried",
+          "Very worried"
+        )
+      )
+    ) %>%
+    filter(
+      !is.na(climate_worry_group),
+      !is.na({{ variable }})
+    ) %>%
+    group_by(
+      climate_worry_group
+    ) %>%
+    summarise(
+      n = n(),
+      mean = mean({{ variable }}, na.rm = TRUE),
+      sd = sd({{ variable }}, na.rm = TRUE),
+      se = sd / sqrt(n),
+      lower_ci = mean - 1.96 * se,
+      upper_ci = mean + 1.96 * se,
+      .groups = "drop"
+    )
+}
+
+# Create summary data for depressive symptoms
+
+depression_figure_data <- summarise_by_climate_worry(
+  depressed_sample,
+  depression_mean_0
+)
+
+# Create depressive symptoms figure
+
+plot_depression_figure <- ggplot(
+  depression_figure_data,
+  aes(
+    x = climate_worry_group,
+    y = mean,
+    group = 1
+  )
+) +
+  geom_line(
+    linewidth = 0.9,
+    color = "#2C3E50"
+  ) +
+  geom_point(
+    aes(fill = climate_worry_group),
+    shape = 21,
+    size = 3.3,
+    color = "black",
+    stroke = 0.4
+  ) +
+  geom_errorbar(
+    aes(
+      ymin = lower_ci,
+      ymax = upper_ci
+    ),
+    width = 0.10,
+    linewidth = 0.55,
+    color = "#2C3E50"
+  ) +
+  scale_fill_manual(
+    values = climate_worry_colours
+  ) +
+  labs(
+    x = "Climate worry",
+    y = "Mean depressive symptom score"
+  ) +
+  theme_classic(
+    base_family = "Times New Roman",
+    base_size = 12
+  ) +
+  theme(
+    text = element_text(
+      family = "Times New Roman",
+      color = "black"
+    ),
+    axis.title.x = element_text(
+      family = "Times New Roman",
+      size = 12,
+      margin = margin(t = 8),
+      color = "black"
+    ),
+    axis.title.y = element_text(
+      family = "Times New Roman",
+      size = 12,
+      margin = margin(r = 8),
+      color = "black"
+    ),
+    axis.text.x = element_text(
+      family = "Times New Roman",
+      angle = 25,
+      hjust = 1,
+      size = 10,
+      color = "black"
+    ),
+    axis.text.y = element_text(
+      family = "Times New Roman",
+      size = 10,
+      color = "black"
+    ),
+    legend.position = "none",
+    plot.margin = margin(
+      t = 8,
+      r = 10,
+      b = 8,
+      l = 8
+    )
+  )
+
+plot_depression_figure
+
+########################################################
+### SFIGURE 3 - ANTISOCIAL BEHAVIOR BY CLIMATE WORRY ###
+########################################################
+
+# Create summary data for antisocial behavior
+
+antisocial_figure_data <- summarise_by_climate_worry(
+  depressed_sample,
+  antisocial_mean_0
+)
+
+# Create antisocial traits figure
+
+plot_antisocial_figure <- ggplot(
+  antisocial_figure_data,
+  aes(
+    x = climate_worry_group,
+    y = mean,
+    group = 1
+  )
+) +
+  geom_line(
+    linewidth = 0.9,
+    color = "#2C3E50"
+  ) +
+  geom_point(
+    aes(fill = climate_worry_group),
+    shape = 21,
+    size = 3.3,
+    color = "black",
+    stroke = 0.4
+  ) +
+  geom_errorbar(
+    aes(
+      ymin = lower_ci,
+      ymax = upper_ci
+    ),
+    width = 0.10,
+    linewidth = 0.55,
+    color = "#2C3E50"
+  ) +
+  scale_fill_manual(
+    values = climate_worry_colours
+  ) +
+  labs(
+    x = "Climate worry",
+    y = "Mean antisocial behavior score"
+  ) +
+  theme_classic(
+    base_family = "Times New Roman",
+    base_size = 12
+  ) +
+  theme(
+    text = element_text(
+      family = "Times New Roman",
+      color = "black"
+    ),
+    axis.title.x = element_text(
+      family = "Times New Roman",
+      size = 12,
+      margin = margin(t = 8),
+      color = "black"
+    ),
+    axis.title.y = element_text(
+      family = "Times New Roman",
+      size = 12,
+      margin = margin(r = 8),
+      color = "black"
+    ),
+    axis.text.x = element_text(
+      family = "Times New Roman",
+      angle = 25,
+      hjust = 1,
+      size = 10,
+      color = "black"
+    ),
+    axis.text.y = element_text(
+      family = "Times New Roman",
+      size = 10,
+      color = "black"
+    ),
+    legend.position = "none",
+    plot.margin = margin(
+      t = 8,
+      r = 10,
+      b = 8,
+      l = 8
+    )
+  )
+
+plot_antisocial_figure
