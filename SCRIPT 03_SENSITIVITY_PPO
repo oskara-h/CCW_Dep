@@ -224,13 +224,6 @@ brant_summary_gt <- brant_summary %>%
     min_p = "Minimum p",
     max_p = "Maximum p"
   ) %>%
-  tab_source_note(
-    source_note = paste0(
-      "Note. The Brant test was run separately in each imputed dataset. ",
-      "Results are diagnostic and are not formally pooled test statistics. ",
-      "Predictors with p < .05 in at least half of the imputed datasets are flagged as likely proportional odds violations."
-    )
-  ) %>%
   tab_options(
     table.font.names = "Times New Roman",
     table.font.size = 12,
@@ -521,14 +514,6 @@ ppo_results_gt <- ppo_results_table %>%
     effect_type = "Effect type",
     OR_CI = "OR (95% CI)",
     p = "P-value"
-  ) %>%
-  tab_source_note(
-    source_note = paste0(
-      "Note. OR = odds ratio; CI = confidence interval. ",
-      "Results are pooled across multiply imputed datasets using Rubin's rules. ",
-      "Threshold-specific effects were inverted so that all odds ratios consistently represent higher odds of being in a higher climate worry category. ",
-      "This sensitivity model does not use municipality-clustered standard errors, because cluster-robust variance estimation is not implemented for clm models with nominal effects in the applied software."
-    )
   ) %>%
   tab_style(
     style = list(
