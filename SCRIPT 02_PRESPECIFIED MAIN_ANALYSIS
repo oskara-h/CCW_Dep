@@ -251,9 +251,6 @@ standard_ordinal_results_gt <- standard_ordinal_results_or %>%
     OR_CI = "OR (95% CI)",
     p = "p"
   ) %>%
-  tab_source_note(
-    source_note = "Note. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
-  ) %>%
   tab_options(
     table.font.names = "Times New Roman",
     table.font.size = 12,
@@ -301,7 +298,7 @@ print(binary_cluster_summary)
 # 1 = no climate worry (climate disengagement)
 # 0 = any climate worry
 binary_formula <- I(1 - climate_binary) ~
-  depression_centered *
+  depression_centered +
   antisocial_centered +
   gender_binary +
   age +
@@ -380,8 +377,6 @@ binary_results_or <- binary_results %>%
       term == "(Intercept)" ~ "Intercept",
       term == "depression_centered" ~ "Depressive symptoms",
       term == "antisocial_centered" ~ "Antisocial traits",
-      term == "depression_centered:antisocial_centered" ~
-        "Depressive symptoms x antisocial traits",
       term == "gender_binary" ~ "Gender (girls)",
       term == "age" ~ "Age",
       term == "ses" ~ "Socioeconomic status",
@@ -445,9 +440,6 @@ binary_results_gt <- binary_results_or %>%
     term_label = "Predictor",
     OR_CI = "OR (95% CI)",
     p = "p"
-  ) %>%
-  tab_source_note(
-    source_note = "Note. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. The outcome is climate disengagement, coded 1 = no climate worry and 0 = any climate worry. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
   ) %>%
   tab_options(
     table.font.names = "Times New Roman",
