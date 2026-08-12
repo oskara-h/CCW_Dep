@@ -94,7 +94,7 @@ ordinal_formula_cc <- climate_ordinal ~
   family_violence_binary
 
 binary_formula_cc <- no_climate_worry ~
-  depression_centered *
+  depression_centered +
   antisocial_centered +
   gender_binary +
   age +
@@ -325,14 +325,6 @@ ordinal_results_cc_gt <- ordinal_results_cc_or %>%
     OR_CI = "OR (95% CI)",
     p = "p"
   ) %>%
-  tab_source_note(
-    source_note = paste0(
-      "Note. OR = odds ratio; CI = confidence interval. ",
-      "* p < .05, ** p < .01, *** p < .001. ",
-      "The outcome is climate worry severity among adolescents reporting any climate worry. ",
-      "Standard errors are clustered by municipality. Complete-case analysis."
-    )
-  ) %>%
   tab_options(
     table.font.names = "Times New Roman",
     table.font.size = 12,
@@ -351,15 +343,7 @@ binary_results_cc_gt <- binary_results_cc_or %>%
     OR_CI = "OR (95% CI)",
     p = "p"
   ) %>%
-  tab_source_note(
-    source_note = paste0(
-      "Note. OR = odds ratio; CI = confidence interval. ",
-      "* p < .05, ** p < .01, *** p < .001. ",
-      "The outcome is no climate worry, coded 1 = no climate worry and 0 = any climate worry. ",
-      "Standard errors are clustered by municipality. Complete-case analysis."
-    )
-  ) %>%
-  tab_options(
+   tab_options(
     table.font.names = "Times New Roman",
     table.font.size = 12,
     heading.title.font.size = 13,
