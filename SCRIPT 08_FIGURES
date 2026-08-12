@@ -198,22 +198,6 @@ climate_worry_age_plot <- ggplot(
 
 climate_worry_age_plot
 
-ggsave(
-  filename = "climate_worry_by_age_depressed_sample.png",
-  plot = climate_worry_age_plot,
-  width = 8,
-  height = 5,
-  dpi = 600
-)
-
-ggsave(
-  filename = "climate_worry_by_age_depressed_sample.pdf",
-  plot = climate_worry_age_plot,
-  width = 8,
-  height = 5,
-  device = cairo_pdf
-)
-
 #####################################################
 ### SFIGURE 1: CLIMATE WORRY BY P-FACTOR SUBGROUP ###
 #####################################################
@@ -351,22 +335,6 @@ plot_pfactor_climate_worry <- ggplot(
   )
 
 plot_pfactor_climate_worry
-
-ggsave(
-  filename = "climate_worry_by_pfactor_subgroup.png",
-  plot = plot_pfactor_climate_worry,
-  width = 6.5,
-  height = 6,
-  dpi = 600
-)
-
-ggsave(
-  filename = "climate_worry_by_pfactor_subgroup.pdf",
-  plot = plot_pfactor_climate_worry,
-  width = 6.5,
-  height = 6,
-  device = cairo_pdf
-)
 
 ########################################################
 ### SFIGURE 2 - DEPRESSIVE SYMPTOMS BY CLIMATE WORRY ###
