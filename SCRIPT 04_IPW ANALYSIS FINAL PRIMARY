@@ -315,7 +315,7 @@ ipw_binary_models <- purrr::map(
   ipw_binary_list,
   ~ glm(
     I(1 - climate_binary) ~
-      depression_centered *
+      depression_centered +
       antisocial_centered +
       gender_binary +
       age +
@@ -368,8 +368,6 @@ format_ipw_table <- function(data) {
       term_label = case_when(
         term == "depression_centered" ~ "Depressive symptoms",
         term == "antisocial_centered" ~ "Antisocial traits",
-        term == "depression_centered:antisocial_centered" ~
-          "Depressive symptoms x antisocial traits",
         term == "gender_binary" ~ "Gender (girls)",
         term == "age" ~ "Age",
         term == "ses" ~ "Socioeconomic status",
@@ -421,7 +419,7 @@ format_ipw_table <- function(data) {
 ipw_ordinal_gt <- format_ipw_table(ipw_ordinal_results) %>%
   gt() %>%
   tab_header(
-    title = "IPW sensitivity analysis: ordinal climate worry model"
+    title = "IPW analysis: ordinal climate worry model"
   ) %>%
   cols_label(
     term_label = "Predictor",
@@ -438,7 +436,7 @@ ipw_ordinal_gt <- format_ipw_table(ipw_ordinal_results) %>%
 ipw_binary_gt <- format_ipw_table(ipw_binary_results) %>%
   gt() %>%
   tab_header(
-    title = "IPW sensitivity analysis: binary climate disengagement model"
+    title = "IPW analysis: binary climate disengagement model"
   ) %>%
   cols_label(
     term_label = "Predictor",
