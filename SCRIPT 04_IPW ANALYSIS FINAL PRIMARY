@@ -61,7 +61,7 @@ ipw_imputation_data <- depressed_sample %>%
 
 mice::md.pattern(ipw_imputation_data)
 
-# MULTIPLE IMPUTATION FOR IPW SENSITIVITY
+# MULTIPLE IMPUTATION FOR IPW
 
 init_ipw <- mice(
   ipw_imputation_data,
@@ -428,9 +428,6 @@ ipw_ordinal_gt <- format_ipw_table(ipw_ordinal_results) %>%
     OR_CI = "OR (95% CI)",
     p = "p"
   ) %>%
-  tab_source_note(
-    source_note = "Note. IPW = inverse probability weighting. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. Weights adjust for the estimated probability of having observed climate worry outcome data. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
-  ) %>%
   tab_options(
     table.font.names = "Times New Roman",
     table.font.size = 12,
@@ -447,9 +444,6 @@ ipw_binary_gt <- format_ipw_table(ipw_binary_results) %>%
     term_label = "Predictor",
     OR_CI = "OR (95% CI)",
     p = "p"
-  ) %>%
-  tab_source_note(
-    source_note = "Note. IPW = inverse probability weighting. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. The outcome is climate disengagement, coded 1 = no climate worry and 0 = any climate worry. Weights adjust for the estimated probability of having observed climate worry outcome data. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
   ) %>%
   tab_options(
     table.font.names = "Times New Roman",
