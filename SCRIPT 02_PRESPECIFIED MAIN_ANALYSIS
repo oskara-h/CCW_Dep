@@ -599,7 +599,7 @@ ordinal_gender_interaction_gt
 #############################################
 
 binary_gender_interaction_formula <- I(1 - climate_binary) ~
-  depression_centered *
+  depression_centered +
   antisocial_centered +
   gender_binary *
   depression_centered +
@@ -777,7 +777,7 @@ fit_binary_stratified <- function(gender_value, gender_label) {
     stratified_data,
     ~ glm(
       I(1 - climate_binary) ~
-        depression_centered *
+        depression_centered +
         antisocial_centered +
         age +
         ses +
