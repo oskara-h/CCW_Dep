@@ -1275,7 +1275,7 @@ binary_cluster_summary_nondep <- purrr::map_dfr(
 print(binary_cluster_summary_nondep)
 
 binary_formula_nondep <- I(1 - climate_binary) ~
-  depression_centered *
+  depression_centered +
   antisocial_centered +
   gender_binary +
   age +
