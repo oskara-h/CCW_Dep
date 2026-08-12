@@ -582,9 +582,6 @@ ordinal_gender_interaction_gt <- ordinal_gender_interaction_results %>%
     OR_CI = "OR (95% CI)",
     p = "p"
   ) %>%
-  tab_source_note(
-    source_note = "Note. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
-  ) %>%
   tab_options(
     table.font.names = "Times New Roman",
     table.font.size = 12,
@@ -656,9 +653,6 @@ binary_gender_interaction_gt <- binary_gender_interaction_results %>%
     term_label = "Predictor",
     OR_CI = "OR (95% CI)",
     p = "p"
-  ) %>%
-  tab_source_note(
-    source_note = "Note. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. The outcome is climate disengagement, coded 1 = no climate worry and 0 = any climate worry. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
   ) %>%
   tab_options(
     table.font.names = "Times New Roman",
@@ -750,9 +744,6 @@ ordinal_stratified_gt <- ordinal_stratified_results %>%
     label = "Girls",
     columns = c(Girls_OR_CI, Girls_p)
   ) %>%
-  tab_source_note(
-    source_note = "Note. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
-  ) %>%
   tab_options(
     table.font.names = "Times New Roman",
     table.font.size = 12,
@@ -841,9 +832,6 @@ binary_stratified_gt <- binary_stratified_results %>%
   tab_spanner(
     label = "Girls",
     columns = c(Girls_OR_CI, Girls_p)
-  ) %>%
-  tab_source_note(
-    source_note = "Note. OR = odds ratio; CI = confidence interval. * p < .05, ** p < .01, *** p < .001. The outcome is climate disengagement, coded 1 = no climate worry and 0 = any climate worry. Standard errors are clustered by municipality. Results are pooled across multiply imputed datasets using Rubin's rules."
   ) %>%
   tab_options(
     table.font.names = "Times New Roman",
